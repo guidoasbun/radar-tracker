@@ -39,3 +39,4 @@ endfunction()
 
 radar_add_test(test_smoke test_smoke.cpp)
 radar_add_test(test_linalg test_linalg.cpp)
+radar_add_test(test_types test_types.cpp)
