@@ -1,0 +1,29 @@
+# gitleaks configuration for radar-tracker.
+# Extends gitleaks' built-in ruleset (do NOT replace it) and adds a project
+# allowlist so legitimate files don't trip the scanner. See ADR-0005.
+
+[extend]
+# Inherit all of gitleaks' default secret-detection rules.
+useDefault = true
+
+[allowlist]
+description = "radar-tracker allowlisted paths and patterns"
+
+# Paths that never contain real secrets. Example/template files are expected to
+# hold placeholder values, and generated run output under out/ is git-ignored.
+paths = [
+  '''\.env\.example$''',
+  '''\.env\.sample$''',
+  '''.*\.example(\..*)?$''',
+  '''.*\.sample$''',
+  '''(^|/)out/''',
+  '''(^|/)build/''',
+]
+
+# Common non-secret placeholders used in docs/specs/sample configs.
+regexes = [
+  '''(?i)your[_-]?(api[_-]?key|token|secret|password)[_-]?here''',
+  '''(?i)example[_-]?(key|token|secret)''',
+  '''xxxx+''',
+  '''<[A-Z_]+>''',
+]
