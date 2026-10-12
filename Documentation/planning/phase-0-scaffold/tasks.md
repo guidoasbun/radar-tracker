@@ -77,7 +77,11 @@ file included Eigen. Addressed with a second round of fixes, all re-verified:
       `_FORTIFY_SOURCE` `-U` guard (N5), README hook docs (N6), `.gitignore` gaps (N7),
       stale docs (N8), tidy on generated header (N9), implicit-conversion note (N10),
       repo settings (non-provider scanning + branch protection).
-- [ ] Commit + push review round 2 — pending user go-ahead.
+- [x] Commit + push review round 2 (`7c15ebb`).
+- [x] Review round 3 (final approval) fixes: F1 (install snippet aborts on checksum
+      failure — pinned hash, `&&` chaining, `curl -f`), F2 (ADR-0005 non-provider
+      scanning status corrected to pending), F3 minors (gitignore dedupe, `.gitleaks.toml`
+      yml dupe, ADR blank line, `enforce_admins` on main). PR #2 approved pending these.
 
 ## Exit criteria
 Phase 0 is complete when every acceptance criterion in `requirements.md` is

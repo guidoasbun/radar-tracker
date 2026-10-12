@@ -48,14 +48,16 @@ protection. A review raised two valid points:
     allowlist), activated via `scripts/setup-hooks.sh` (`core.hooksPath=.githooks`).
     gitleaks is installed from a checksum-verified release binary.
   - ✅ GitHub secret scanning + push protection enabled on the repo.
-  - ✅ Non-provider (generic) pattern scanning enabled, covering custom tokens the
-    provider rules miss.
+  - ⏳ Non-provider (generic) pattern scanning: **not yet enabled.** The REST API
+    returns 200 but leaves `secret_scanning_non_provider_patterns=disabled` (the
+    available token scope / account tier cannot toggle it). Enable it in the web UI:
+    Settings → Code security → Secret scanning → "Scan for non-provider patterns".
   - ⏳ A gitleaks CI job (unbypassable, unlike the local hook) will be added with the
     M1 CI workflow.
 - Follow-ups:
+  - Enable non-provider pattern scanning via the web UI (see above).
   - Consider switching to release-archive URLs + hash (`URL_HASH`) for faster, git-free
     fetches if CI clone time becomes a concern.
-
 
 ## Alternatives considered
 

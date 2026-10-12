@@ -24,7 +24,7 @@ paths = [
   '''^\.env\.(example|sample)$''',
   '''^(build|out)/''',
   # Example/sample CONFIG files only — explicit extensions, not source code.
-  '''\.(env|json|ya?ml|yml|toml|ini|cfg|conf)\.(example|sample)$''',
+  '''\.(env|json|ya?ml|toml|ini|cfg|conf)\.(example|sample)$''',
 ]
 
 # Whole-value placeholders only (anchored ^...$), so a secret that merely

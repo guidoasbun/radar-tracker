@@ -56,17 +56,14 @@ gcloud-service-key.json
 # --------------------------------------------------------------------------
 # BUILD ARTIFACTS
 # --------------------------------------------------------------------------
-# Root build trees...
-/build/
-/install/
-/_deps/
-# ...and nested ones anywhere (e.g. docker/build/, apps/.../build/) so stray
-# build output is never committed and never scanned-around by tooling.
+# A pattern like 'build/' matches a directory of that name at ANY depth, so it
+# covers both the root tree and nested ones (docker/build/, apps/.../build/).
+# Note: this also ignores any source dir literally named 'build' — unlikely here.
 build/
-**/build/
-# CLion / JetBrains CMake build dirs (contain _deps/ sources).
+install/
+_deps/
+# CLion / JetBrains CMake build dirs (contain _deps/ sources), at any depth.
 cmake-build-*/
-**/cmake-build-*/
 CMakeUserPresets.json
 
 # Object files / libraries / executables (extensions that are never source)
@@ -93,7 +90,6 @@ vgcore.*
 # secrets lifted from process memory, so never commit them.
 /core
 core.[0-9]*
-**/core.[0-9]*
 perf.data
 perf.data.old
 

@@ -22,17 +22,18 @@ else
 
 gitleaks is NOT installed. Install it securely with ONE of these:
 
-  # ---- Official release binary (no root), x86_64 Linux, WITH checksum verify ----
+  # ---- Official release binary (no root), x86_64 Linux ----
+  # The SHA256 is PINNED here (copied once from gitleaks_8.30.1_checksums.txt).
+  # Everything is &&-chained so extraction only runs if the checksum matches,
+  # and curl -f makes an HTTP error page a failure instead of a saved "file".
   VER=8.30.1
-  TMP="$(mktemp -d)"                       # private temp dir (no fixed /tmp path)
-  BASE="https://github.com/gitleaks/gitleaks/releases/download/v${VER}"
-  curl -sSL -o "$TMP/gl.tgz"        "$BASE/gitleaks_${VER}_linux_x64.tar.gz"
-  curl -sSL -o "$TMP/checksums.txt" "$BASE/gitleaks_${VER}_checksums.txt"
-  ( cd "$TMP" \
-    && mv gl.tgz "gitleaks_${VER}_linux_x64.tar.gz" \
-    && sha256sum -c --ignore-missing checksums.txt )   # ABORTS on mismatch
-  mkdir -p "$HOME/.local/bin"
-  tar -xzf "$TMP/gitleaks_${VER}_linux_x64.tar.gz" -C "$HOME/.local/bin" gitleaks
+  SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  TMP="$(mktemp -d)" && \
+  curl -fsSL -o "$TMP/gl.tgz" \
+    "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" && \
+  echo "${SHA256}  $TMP/gl.tgz" | sha256sum -c - && \
+  mkdir -p "$HOME/.local/bin" && \
+  tar -xzf "$TMP/gl.tgz" -C "$HOME/.local/bin" gitleaks; \
   rm -rf "$TMP"
 
   # ---- macOS ----
