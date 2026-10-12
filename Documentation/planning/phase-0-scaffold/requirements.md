@@ -45,8 +45,17 @@ On a fresh checkout with no `build/` directory:
 - `cmake --build --preset ci` builds with zero errors **and zero warnings** (the `ci` preset uses `-Werror`).
 
 ### AC-4 — Both compilers
-- The project configures and builds with **GCC** (g++ 14).
-- The project configures and builds with **Clang** (clang++ 21), including the `ci` preset with `-Werror` (any Clang-21-specific warnings are fixed, not suppressed wholesale — see ADR-0002).
+- The project configures and builds with **GCC** (g++ 14) using the `ci` preset.
+- The project configures and builds with **Clang** (clang++ 21) using the `ci-clang`
+  preset (its own compiler cache vars and `binaryDir`, so it never silently reuses a
+  GCC-configured build directory).
+- **Our code** (`radar` library + tests, including a translation unit that includes
+  `<Eigen/Dense>` and performs matrix operations) builds with **zero warnings** under
+  both compilers with the full `-Werror` set. Any Clang-21-specific warning in our code
+  is fixed, not suppressed.
+- **Third-party code is exempt**: dependencies are consumed as SYSTEM includes
+  (`-isystem`), so their warnings do not reach our `-Werror`. One narrow, documented
+  suppression applies to GoogleTest's own targets only (see ADR-0002).
 
 ### AC-5 — Trivial test passes
 - `ctest --preset debug` runs the trivial test and reports 100% passed.

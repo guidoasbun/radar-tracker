@@ -42,12 +42,34 @@ clearly-in-progress state. Check off as completed; this doubles as the execution
 
 ### Verification notes
 - **asan under GCC failed** on RHEL 10: `libasan.so.8.0.0` runtime not installed (only a linker script present). Resolved by pinning the `asan` preset to Clang, whose compiler-rt runtime is complete and verified detecting an injected leak. See **ADR-0004**.
-- **Clang 21 emitted `-Wcharacter-conversion`** from GoogleTest's own headers (not our code). Silenced narrowly on gtest targets only; our TUs compile 0-warning under both compilers. See **ADR-0002**.
+- **Clang 21 emitted `-Wcharacter-conversion`** from GoogleTest's own sources (not our code). SYSTEM includes keep it out of our TUs; one narrow suppression on gtest targets keeps the log clean. See **ADR-0002**.
+
+### PR review follow-up (post-initial-scaffold)
+A code review found the initial scaffold's Eigen SYSTEM handling was ineffective
+(headers were passed with `-I`, not `-isystem`), so `ci` only looked clean because no
+file included Eigen. Addressed with a second round of fixes, all re-verified:
+- Eigen & all deps now use the `SYSTEM` keyword on `FetchContent_Declare` (CMake ≥ 3.25);
+  verified Eigen is `-isystem`. Added `linalg` module + `test_linalg.cpp` (includes
+  `<Eigen/Dense>`, does matrix ops) as a permanent regression guard.
+- Dependencies pinned by full 40-char commit SHA (not mutable tags).
+- Dedicated `ci-clang` preset (own `binaryDir`, forced compiler) — Clang no longer
+  silently reuses a GCC build dir.
+- `.gitignore` rewritten: anchored paths, removed dangerous substring/extension globs;
+  verified legit source/fixtures tracked and secrets still ignored.
+- OpenSSF hardening flags (`release`/`ci`), extra numeric warnings (incl. `-Wdouble-promotion`).
+- clang-tidy enforced per-target with `--warnings-as-errors=*`; `cert-*` + explicit
+  `clang-analyzer-*` added. `noTestsAction=error` on all test presets.
+- Stronger sanitizers (`float-divide-by-zero`, `implicit-conversion`, extra ASAN_OPTIONS).
+- Version single-sourced via `configure_file`; `-ffp-contract=off` moved to base preset;
+  `PROJECT_SOURCE_DIR` used; misleading comments and non-existent options removed.
+- Verified: all 5 presets build 0-warning (our code) on GCC + Clang, 5/5 tests pass,
+  clang-format clean, only our tests registered (not Eigen's ~900).
 
 ## T8 — Commit
 - [x] Repo already initialized; remote `origin` → github.com/guidoasbun/radar-tracker; default branch renamed `master` → `main`.
 - [x] `.idea/` unstaged and git-ignored.
-- [ ] Stage scaffold (no `build/`/`_deps`) and commit — pending user go-ahead.
+- [x] Initial Phase 0 scaffold committed (`ef4b017`) on branch `scaffold-and-toolchain`.
+- [ ] Commit PR-review fixes — pending user go-ahead.
 
 ## Exit criteria
 Phase 0 is complete when every acceptance criterion in `requirements.md` is

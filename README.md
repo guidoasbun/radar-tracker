@@ -13,12 +13,17 @@ for the implementation plan (phase by phase).
 
 ## Requirements
 
-- CMake ≥ 3.24 and Ninja
-- A C++20 compiler (GCC ≥ 12 or Clang ≥ 15)
+- CMake ≥ 3.25 and Ninja
+- A C++20 compiler. The build matrix is **GCC ≥ 12** (`ci` preset) and
+  **Clang ≥ 15** (`ci-clang` preset). The `asan` preset requires Clang.
 - Internet access on first configure (dependencies are fetched via FetchContent)
 
-Dependencies (Eigen, GoogleTest, nlohmann/json, CLI11) are fetched automatically
-and pinned to Git tags — no manual installation required.
+Dependencies (Eigen, GoogleTest, nlohmann/json, CLI11) are fetched automatically and
+pinned to full commit SHAs — no manual installation required.
+
+> On first configure you may see CMake *deprecation warnings* originating from
+> CLI11's and Eigen's own `cmake_minimum_required`. These come from the
+> dependencies, not this project, and are expected/harmless.
 
 ## Build and test
 
@@ -34,15 +39,18 @@ Available presets:
 | Preset | Purpose |
 | --- | --- |
 | `debug` | `-O0 -g`, day-to-day development |
-| `release` | `-O2 -DNDEBUG`, optimized |
-| `asan` | AddressSanitizer + UndefinedBehaviorSanitizer on the test suite |
-| `ci` | release + `-Werror` + `-ffp-contract=off` (the gate CI enforces) |
+| `release` | `-O2 -DNDEBUG`, optimized + hardening |
+| `ci` | release + `-Werror` + clang-tidy (GCC) — the gate CI enforces |
+| `ci-clang` | same as `ci` but built with Clang (own build dir) |
+| `asan` | AddressSanitizer + UndefinedBehaviorSanitizer on the test suite (Clang) |
 
-Build with Clang instead of GCC:
+Build with Clang instead of GCC — use the dedicated preset (it has its own build
+directory and pins the compiler, so it never silently reuses a GCC-configured tree):
 
 ```bash
-CC=clang CXX=clang++ cmake --preset ci
-cmake --build --preset ci
+cmake --preset ci-clang
+cmake --build --preset ci-clang
+ctest --preset ci-clang --output-on-failure
 ```
 
 ## License

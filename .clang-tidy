@@ -1,21 +1,28 @@
 # Radar Tracker static analysis configuration.
-# Check groups per spec: bugprone, cppcoreguidelines, modernize, performance,
-# readability, misc. Disabled checks are listed with a reason each.
+# Enforced in the ci / ci-clang presets via CMAKE_CXX_CLANG_TIDY with
+# --warnings-as-errors=* (see CMakePresets.json), so any finding in our code
+# fails the build. clang-analyzer-* is listed explicitly (not relied on via a
+# group default) so a future upstream change cannot silently drop it. cert-* is
+# included for the security-first posture.
 #
-# Disabled, with rationale:
+# Disabled checks, with rationale:
 #   - modernize-use-trailing-return-type:
-#       stylistic only; the project uses leading return types.
+#       stylistic; the project uses leading return types.
 #   - readability-identifier-length:
-#       math code uses short names (x, P, F, H, S, K) that match the spec's
-#       equations; enforcing minimum length would hurt readability here.
+#       math code uses short names (x, P, F, H, S, K) matching the spec's
+#       equations; a minimum-length rule would hurt readability.
 #   - cppcoreguidelines-avoid-magic-numbers / readability-magic-numbers:
-#       re-enabled later once named constants exist; noisy against literal
-#       matrix initializers during early milestones.
+#       re-enabled once named constants exist; noisy against literal matrix
+#       initializers during early milestones.
 #   - misc-include-cleaner:
 #       too aggressive with umbrella headers (Eigen) in this toolchain.
+#   - cert-err58-cpp:
+#       fires on GoogleTest's static TEST() registration objects; not our code.
 
 Checks: >
   bugprone-*,
+  cert-*,
+  clang-analyzer-*,
   cppcoreguidelines-*,
   modernize-*,
   performance-*,
@@ -25,8 +32,11 @@ Checks: >
   -readability-identifier-length,
   -cppcoreguidelines-avoid-magic-numbers,
   -readability-magic-numbers,
-  -misc-include-cleaner
+  -misc-include-cleaner,
+  -cert-err58-cpp
 
+# Enforcement is driven by the preset flag (--warnings-as-errors=*). Leaving this
+# empty keeps ad-hoc `clang-tidy` invocations non-fatal for exploration.
 WarningsAsErrors: ''
 HeaderFilterRegex: '.*/(include/radar|src)/.*'
 FormatStyle: file

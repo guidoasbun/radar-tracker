@@ -51,10 +51,32 @@ spec author never saw on Clang 15) would block ordinary local development, not j
     the Phase 0 verification steps already exercise.
   - Clang 21 may require more up-front cleanups than Clang 15 would have.
 - Follow-ups:
-  - If a specific Clang 21 diagnostic proves spurious for our code, record the scoped
-    suppression here and in `.clang-tidy`/pragma with rationale.
   - Keep GitHub Actions on `ubuntu-24.04`; note its GCC/Clang versions may differ from
     local, so CI is the final arbiter for the matrix.
+
+## Third-party warning handling (recorded suppressions)
+
+Our strict `-Werror` set applies **only to our own targets** (`radar`, test
+executables), never to fetched dependencies:
+
+1. **SYSTEM includes.** Every dependency is declared with the `SYSTEM` keyword in
+   `cmake/Dependencies.cmake` (requires CMake ≥ 3.25), so Eigen/GoogleTest/json/CLI11
+   headers are consumed via `-isystem`. Their internal warnings therefore never reach
+   our `-Werror` build. (This replaced an earlier, incorrect attempt to mark an ALIAS
+   target's includes SYSTEM, which does not work — the root cause the PR review caught.)
+
+2. **One scoped suppression — `-Wno-character-conversion` on the GoogleTest targets.**
+   Clang 21 emits `-Wcharacter-conversion` while compiling GoogleTest's *own* sources
+   (`gtest-printers`), where GoogleTest self-includes via a non-SYSTEM path. GoogleTest
+   is not built with `-Werror`, so this is harmless, but it is silenced on the
+   `gtest`/`gtest_main`/`gmock`/`gmock_main` targets only, guarded by a
+   `check_cxx_compiler_flag`, in `tests/CMakeLists.txt`. It touches no code of ours.
+   This is the scoped suppression this ADR commits to recording.
+
+No suppressions are applied to our own code: `radar`, `linalg.cpp`,
+`test_smoke.cpp`, and `test_linalg.cpp` (which includes `<Eigen/Dense>` and does matrix
+operations) all compile warning-free under both GCC 14 and Clang 21 with the full
+`-Werror` set.
 
 ## Alternatives considered
 

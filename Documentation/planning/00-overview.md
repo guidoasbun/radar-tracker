@@ -68,7 +68,7 @@ sensor to generate data, so the M1 module order is:
 | --- | --- | --- | --- |
 | GCC (g++) | 14.3.1 | GCC 12 | primary compiler |
 | Clang/Clang++ | 21.1.8 | Clang 15 | much newer; see ADR-0002 on `-Werror` |
-| CMake | 3.31.8 | 3.24 | presets supported |
+| CMake | 3.31.8 | 3.25 | presets + SYSTEM keyword on FetchContent_Declare |
 | Ninja | 1.11.1 | — | chosen generator; see ADR-0001 |
 | clang-tidy / clang-format | 21.1.8 | — | available locally (M2) |
 | Valgrind | 3.26.0 | — | nightly memcheck |

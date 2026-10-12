@@ -14,21 +14,26 @@ radar-tracker/
 ├── CMakeLists.txt              # top-level: project(), options, add_subdirectory
 ├── CMakePresets.json           # debug, release, asan, ci
 ├── cmake/
-│   └── Dependencies.cmake      # FetchContent for Eigen, GoogleTest, json, CLI11
+│   ├── Dependencies.cmake      # FetchContent for Eigen, GoogleTest, json, CLI11 (SYSTEM, SHA-pinned)
+│   └── version.hpp.in          # template: version single-sourced from PROJECT_VERSION
 ├── .clang-format               # Google base, 100 columns
-├── .clang-tidy                 # bugprone/cppcoreguidelines/modernize/... 
+├── .clang-tidy                 # bugprone/cert/clang-analyzer/cppcoreguidelines/modernize/...
 ├── .gitignore
-├── LICENSE                     # placeholder until license decided (spec open question)
+├── LICENSE                     # MIT (ADR-0003)
 ├── README.md                   # build/run instructions; result plots added in M1
 ├── include/radar/
-│   └── version.hpp             # single trivial public symbol for Phase 0
+│   └── linalg.hpp              # symmetrize() — real Eigen-using API (Kalman P guard)
 ├── src/
 │   ├── CMakeLists.txt          # defines the libradar static library
-│   └── version.cpp             # trivial implementation
+│   └── linalg.cpp              # Eigen-using implementation (exercises the ci Eigen path)
 └── tests/
-    ├── CMakeLists.txt          # GoogleTest discovery
-    └── test_smoke.cpp          # trivial test: links libradar, asserts version symbol
+    ├── CMakeLists.txt          # GoogleTest discovery + per-target clang-tidy helper
+    ├── test_smoke.cpp          # links libradar, asserts generated version symbol
+    └── test_linalg.cpp         # includes <Eigen/Dense>, does matrix ops — Eigen regression guard
 ```
+
+The generated `radar/version.hpp` (from `cmake/version.hpp.in`) lands under
+`${PROJECT_BINARY_DIR}/generated/radar/` and is added to `libradar`'s include path.
 
 Later phases add `include/radar/{types,motion,sensor,kalman,...}.hpp`, matching
 `src/*.cpp`, `apps/*`, `scenarios/`, `tools/`, `docker/`, and `.github/`. The
@@ -37,7 +42,8 @@ Later phases add `include/radar/{types,motion,sensor,kalman,...}.hpp`, matching
 ## 2. Build system
 
 - **Generator: Ninja.** Chosen over Make. Rationale and tradeoffs in ADR-0001.
-- **CMake ≥ 3.24** (3.31.8 present) for presets and modern FetchContent.
+- **CMake ≥ 3.25** (3.31.8 present) — required for the `SYSTEM` keyword on
+  `FetchContent_Declare`, which is how dependency headers become `-isystem`.
 - **Out-of-source builds** under `build/<preset>/` via `CMakePresets.json` `binaryDir`.
 - **`libradar` is a static library**; `apps/*` (later) and `tests/*` link it. All
   logic lives there so it is unit-testable; executables stay thin.
@@ -47,13 +53,15 @@ Later phases add `include/radar/{types,motion,sensor,kalman,...}.hpp`, matching
 | Preset | Build type | Extra flags | Purpose |
 | --- | --- | --- | --- |
 | `debug` | Debug | `-O0 -g` | day-to-day development; no `-Werror` |
-| `release` | Release | `-O2 -DNDEBUG` | optimized; acceptance runs |
-| `asan` | Debug | debug + `-fsanitize=address,undefined -fno-omit-frame-pointer` (**pinned to Clang**, see ADR-0004) | sanitizer runs on the test suite |
-| `ci` | Release | release + `-Werror` + `-ffp-contract=off` + clang-tidy hook | the gate CI enforces |
+| `release` | Release | `-O2 -DNDEBUG` + hardening | optimized; acceptance runs |
+| `ci` | Release | release + `-Werror` + per-target clang-tidy (`--warnings-as-errors=*`) | the gate CI enforces (GCC) |
+| `ci-clang` | Release | same as `ci`, own `binaryDir`, forces Clang | the Clang half of the matrix |
+| `asan` | Debug | `-fsanitize=address,undefined,float-divide-by-zero,implicit-conversion` (**Clang**, ADR-0004) | sanitizer runs on the test suite |
 
-`-ffp-contract=off` in `ci` is from the spec — it reduces cross-compiler
-floating-point divergence so the acceptance thresholds behave consistently on GCC
-and Clang.
+`-ffp-contract=off` lives on the **base** preset (inherited by all), not just `ci`, so
+local `release` runs produce the same floating-point results as CI — important for the
+RMSE acceptance thresholds. clang-tidy is attached **per target** (our code only), never
+globally, so it does not analyze fetched dependency sources.
 
 ## 3. Compiler warning baseline
 
@@ -92,30 +100,41 @@ Notes:
 ## 5. Tooling configuration
 
 - **`.clang-format`** — Google base style, 100-column limit (per spec).
-- **`.clang-tidy`** — enables `bugprone-*`, `cppcoreguidelines-*`, `modernize-*`,
-  `performance-*`, `readability-*`, `misc-*`; any disabled check carries an inline
-  reason. In Phase 0 the only code is trivial, so this mainly establishes the file.
-- **`.gitignore`** — ignores `build/`, `.idea/` is already present, plus common
-  editor/OS artifacts and Python `__pycache__`.
+- **`.clang-tidy`** — enables `bugprone-*`, `cert-*`, `clang-analyzer-*` (listed
+  explicitly), `cppcoreguidelines-*`, `modernize-*`, `performance-*`, `readability-*`,
+  `misc-*`; each disabled check carries an inline reason. Enforced per-target in the
+  `ci`/`ci-clang` presets via `--warnings-as-errors=*`.
+- **`.gitignore`** — security-first but deliberately NOT used as a security control
+  (it only prevents accidental staging). Patterns are anchored (`/build/`, `/out/`) and
+  avoid broad substring/extension globs that would silently drop source files or
+  fixtures. Specific secret file types (`*.pem`, `*.key`, `.env*`, `id_rsa`, `*.tfstate`)
+  are ignored; `/.idea/` is ignored (not committed). Real secret protection is delegated
+  to a gitleaks hook + GitHub push protection.
 
-## 6. The trivial symbol + smoke test
+## 6. The version symbol + smoke/Eigen tests
 
-To exercise the full build→link→test path without domain logic:
-- `include/radar/version.hpp` declares `radar::version_string()` returning a
-  `std::string_view` compile-time constant.
-- `src/version.cpp` implements it (so the static library has at least one object).
-- `tests/test_smoke.cpp` links `libradar`, calls `radar::version_string()`, and
-  asserts it is non-empty. This proves: the library compiles, the test links against
-  it, GoogleTest is wired to CTest, and sanitizers run clean on a real executable.
+To exercise the full build→link→test path and the Eigen path specifically:
+- `cmake/version.hpp.in` is configured by CMake into
+  `${PROJECT_BINARY_DIR}/generated/radar/version.hpp`, single-sourcing the version from
+  `project(... VERSION ...)`. `version_string()` is `constexpr`. There is no hand-written
+  `version.hpp`/`version.cpp` to drift.
+- `include/radar/linalg.hpp` + `src/linalg.cpp` provide `symmetrize()` (a real helper
+  the Kalman covariance update needs), giving `libradar` an Eigen-using object so the
+  `ci` build actually compiles Eigen under `-Werror`.
+- `tests/test_smoke.cpp` links `libradar` and checks the generated version symbol.
+- `tests/test_linalg.cpp` includes `<Eigen/Dense>` and does matrix operations — the
+  regression guard proving Eigen is consumed as `-isystem` (it would fail to compile
+  under `ci` if Eigen reverted to a plain `-I` include).
 
 ## 7. Risks / watch items for Phase 0
 
 | Risk | Mitigation |
 | --- | --- |
-| Clang 21 emits warnings GCC 14 does not (newer, stricter) | `-Werror` scoped to `ci`; fix real warnings, document any targeted suppression (ADR-0002) |
-| FetchContent first build is slow | cache `build/_deps`; this is a one-time cost |
-| A dependency tag doesn't build on GCC 14 / Clang 21 | pin to the nearest known-good tag; record any bump here and in the overview table |
-| `-Wconversion`/`-Wsign-conversion` noisy with Eigen | Eigen headers marked SYSTEM so its internal conversions don't trip us |
+| Clang 21 emits warnings GCC 14 does not (newer, stricter) | `-Werror` scoped to `ci`/`ci-clang`; fix real warnings; one documented third-party suppression (ADR-0002) |
+| FetchContent first build is slow | cache `build/<preset>/_deps`; one-time cost |
+| A dependency SHA doesn't build on GCC 14 / Clang 21 | deps pinned by full commit SHA; record any bump here and in the overview table |
+| `-Wconversion`/`-Wsign-conversion` fire inside Eigen | deps declared with the `SYSTEM` keyword → `-isystem`, so their warnings never reach our `-Werror`; verified by `test_linalg.cpp` |
+| Eigen registers its own ~900-test suite into CTest | `BUILD_TESTING=OFF` set (non-FORCE) before Eigen is populated; only our tests are discovered |
 
 ## 8. Decisions recorded as ADRs
 
@@ -123,3 +142,4 @@ To exercise the full build→link→test path without domain logic:
 - **ADR-0002** — Compiler versions newer than spec; `-Werror` scoped to the `ci` preset.
 - **ADR-0003** — License: MIT.
 - **ADR-0004** — `asan` preset pinned to Clang (GCC sanitizer runtime missing on RHEL 10).
+- **ADR-0005** — Dependency integrity via full-SHA pins; `.gitignore` is hygiene, not security.

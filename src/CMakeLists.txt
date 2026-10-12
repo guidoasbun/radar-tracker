@@ -1,27 +1,26 @@
 # src/CMakeLists.txt — defines the libradar static library.
 # All project logic lives here so it is unit-testable; apps/ (added later) and
-# tests/ link against this target. New modules add their .cpp here and a matching
-# header under include/radar/.
+# tests/ link against this target.
 
 add_library(radar STATIC
-  version.cpp)
+  linalg.cpp)
 
-# Public headers live under include/radar/.
+# Public headers: the checked-in include/ tree plus the generated version header
+# under the build dir. Use PROJECT_SOURCE_DIR/PROJECT_BINARY_DIR so the library
+# works when consumed as a subproject.
 target_include_directories(radar
   PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>)
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/generated>)
 
-# Link Eigen (header-only, SYSTEM includes) and apply our warning baseline.
 target_link_libraries(radar
   PUBLIC
     Eigen3::Eigen
   PRIVATE
-    radar_warnings)
+    radar_warnings
+    radar_hardening)
 
 target_compile_features(radar PUBLIC cxx_std_20)
-
-# Give the target a friendly archive name: libradar.a
 set_target_properties(radar PROPERTIES OUTPUT_NAME radar)
-
-# Namespaced alias so consumers (tests, apps) use radar::radar.
+radar_enable_tidy(radar)
 add_library(radar::radar ALIAS radar)

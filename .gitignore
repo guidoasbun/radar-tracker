@@ -1,21 +1,27 @@
 # ==========================================================================
 # Radar Tracker — .gitignore
-# Security-first: deny-list for anything that could leak secrets or bloat the
-# repo. If you must commit an example of a sensitive file, name it *.example
-# (those are explicitly re-included at the bottom).
+#
+# NOTE: .gitignore is NOT a security control. It only prevents accidental
+# staging; it does not stop a committed secret and does not scan content. Real
+# secret protection comes from (a) a gitleaks pre-commit hook and (b) GitHub
+# push protection / secret scanning on this public repo. Keep those enabled.
+#
+# This file deliberately AVOIDS broad substring globs (e.g. *token*, *secret*)
+# and bare extension globs (*.csv, *.png) because they silently drop legitimate
+# source files, test fixtures, and committed assets. Patterns are anchored to
+# their real locations where possible.
 # ==========================================================================
 
 # --------------------------------------------------------------------------
-# SECRETS & CREDENTIALS  (never commit these)
+# SECRETS & CREDENTIALS  (specific, high-signal file types only)
 # --------------------------------------------------------------------------
-# Environment / dotenv files
+# dotenv (keep committed templates: .env.example / .env.sample)
 .env
 .env.*
-*.env
-!*.env.example
 !.env.example
+!.env.sample
 
-# Private keys, certificates, keystores
+# Private keys / certificates / keystores
 *.pem
 *.key
 *.p12
@@ -25,71 +31,37 @@
 *.der
 *.jks
 *.keystore
-*.pub
+
+# SSH / GPG private key file names
 id_rsa
 id_dsa
 id_ecdsa
 id_ed25519
-*_rsa
-*_dsa
-*_ecdsa
-*_ed25519
-
-# SSH / GPG
-.ssh/
 *.gpg
-*.asc
 secring.*
 
-# Cloud / provider credentials
-.aws/
-aws.json
-credentials
-*credentials*
+# Cloud / provider credential files (specific names, not substrings)
 .netrc
 .npmrc
 .pypirc
+/credentials
 gcloud-service-key.json
-*service-account*.json
-*-sa.json
 
-# Generic secret-ish names
-*secret*
-*secrets*
-*.secret
-*token*
-*.token
-*password*
-*.pwd
-apikey*
-*api_key*
-*.apikey
-
-# Terraform / infra state (often contains secrets)
+# Terraform state (often contains secrets)
 *.tfstate
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
-.terraform/
 
 # --------------------------------------------------------------------------
-# C++ / CMake BUILD ARTIFACTS
+# BUILD ARTIFACTS  (anchored to repo root)
 # --------------------------------------------------------------------------
-build/
-build-*/
-cmake-build-*/
-_deps/
-out/
-install/
-CMakeCache.txt
-CMakeFiles/
+/build/
+/install/
+/_deps/
 CMakeUserPresets.json
-cmake_install.cmake
-CTestTestfile.cmake
-compile_commands.json
-Testing/
 
-# Object files, libraries, executables
+# Object files / libraries / executables (extensions that are never source)
 *.o
 *.obj
 *.a
@@ -98,108 +70,61 @@ Testing/
 *.so.*
 *.dylib
 *.dll
-*.exe
-*.out
-*.app
-*.lo
-*.slo
-*.la
 
-# Debug / profiling / sanitizer output
+# Debug / profiling / sanitizer / coverage output
 *.dSYM/
-*.su
-*.idb
-*.pdb
 *.gcno
 *.gcda
 *.gcov
+*.lcov
+lcov.info
 callgrind.out.*
 massif.out.*
 vgcore.*
-core
-core.*
+/core
 perf.data
 perf.data.old
-coverage/
-*.lcov
-lcov.info
 
 # --------------------------------------------------------------------------
-# PROJECT RUNTIME OUTPUT  (generated data; keep the repo code-only)
+# PROJECT RUNTIME OUTPUT  (generated run data lives under out/)
+# The simulator/tracker/scorer write CSV/JSON here; this directory is generated.
+# Scenario configs (scenarios/) and test fixtures (tests/) are NOT ignored.
 # --------------------------------------------------------------------------
-# Simulator / tracker / scorer outputs
-out/
-output/
-results/
-*.csv
-*.json.out
-metrics.json
-truth.csv
-meas.csv
-tracks.csv
-# ...but keep scenario configs and any committed sample data
-!scenarios/**/*.json
-!**/*.example.json
-# Generated plots / recordings (large binaries)
-*.png
-*.jpg
-*.jpeg
-*.gif
-*.mp4
-*.log
-!Documentation/**/*.png
-!README*/**/*.png
+/out/
+/output/
+/results/
 
 # --------------------------------------------------------------------------
 # PYTHON  (tools/plot.py and its venv)
 # --------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
-*$py.class
 .venv/
 venv/
-env/
-.Python
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-pip-log.txt
 
 # --------------------------------------------------------------------------
 # IDE / EDITOR
 # --------------------------------------------------------------------------
-.idea/
-.vscode/
+/.idea/
+/.vscode/
 *.swp
 *.swo
 *~
-*.sublime-project
-*.sublime-workspace
 .cache/
 .ccls-cache/
 .clangd/
-tags
-TAGS
+/compile_commands.json
 
 # --------------------------------------------------------------------------
 # OS CRUFT
 # --------------------------------------------------------------------------
 .DS_Store
-.DS_Store?
 ._*
 .Spotlight-V100
 .Trashes
-ehthumbs.db
 Thumbs.db
 desktop.ini
-
-# --------------------------------------------------------------------------
-# EXPLICIT RE-INCLUDES  (safe templates that SHOULD be committed)
-# These win over the deny-rules above because they come last.
-# --------------------------------------------------------------------------
-!*.example
-!*.example.*
-!*.sample
-!.gitignore
-!LICENSE
