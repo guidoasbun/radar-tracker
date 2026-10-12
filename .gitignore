@@ -1,0 +1,138 @@
+# ==========================================================================
+# Radar Tracker — .gitignore
+#
+# NOTE: .gitignore is NOT a security control. It only prevents accidental
+# staging; it does not stop a committed secret and does not scan content. Real
+# secret protection comes from (a) a gitleaks pre-commit hook and (b) GitHub
+# push protection / secret scanning on this public repo. Keep those enabled.
+#
+# This file deliberately AVOIDS broad substring globs (e.g. *token*, *secret*)
+# and bare extension globs (*.csv, *.png) because they silently drop legitimate
+# source files, test fixtures, and committed assets. Patterns are anchored to
+# their real locations where possible.
+# ==========================================================================
+
+# --------------------------------------------------------------------------
+# SECRETS & CREDENTIALS  (specific, high-signal file types only)
+# --------------------------------------------------------------------------
+# dotenv (keep committed templates: .env.example / .env.sample)
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Private keys / certificates / keystores
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*.crt
+*.der
+*.jks
+*.keystore
+
+# SSH / GPG private key file names
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+*.gpg
+secring.*
+
+# Cloud / provider credential files (specific names, not substrings)
+.netrc
+.npmrc
+.pypirc
+/credentials
+gcloud-service-key.json
+
+# Terraform state (often contains secrets)
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+
+# --------------------------------------------------------------------------
+# BUILD ARTIFACTS
+# --------------------------------------------------------------------------
+# A pattern like 'build/' matches a directory of that name at ANY depth, so it
+# covers both the root tree and nested ones (docker/build/, apps/.../build/).
+# Note: this also ignores any source dir literally named 'build' — unlikely here.
+build/
+install/
+_deps/
+# CLion / JetBrains CMake build dirs (contain _deps/ sources), at any depth.
+cmake-build-*/
+CMakeUserPresets.json
+
+# Object files / libraries / executables (extensions that are never source)
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+
+# Debug / profiling / sanitizer / coverage output
+*.dSYM/
+*.gcno
+*.gcda
+*.gcov
+*.lcov
+lcov.info
+callgrind.out.*
+massif.out.*
+vgcore.*
+# Core dumps — ignored by base name AND the core.<pid> form. These can contain
+# secrets lifted from process memory, so never commit them.
+/core
+core.[0-9]*
+perf.data
+perf.data.old
+
+# --------------------------------------------------------------------------
+# PROJECT RUNTIME OUTPUT  (generated run data lives under out/)
+# The simulator/tracker/scorer write CSV/JSON here; this directory is generated.
+# Scenario configs (scenarios/) and test fixtures (tests/) are NOT ignored.
+# --------------------------------------------------------------------------
+/out/
+/output/
+/results/
+
+# --------------------------------------------------------------------------
+# PYTHON  (tools/plot.py and its venv)
+# --------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --------------------------------------------------------------------------
+# IDE / EDITOR
+# --------------------------------------------------------------------------
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*~
+.cache/
+.ccls-cache/
+.clangd/
+/compile_commands.json
+
+# --------------------------------------------------------------------------
+# OS CRUFT
+# --------------------------------------------------------------------------
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini

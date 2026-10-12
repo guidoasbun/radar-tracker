@@ -1,0 +1,45 @@
+# Radar Tracker static analysis configuration.
+# Enforced in the ci / ci-clang presets via CMAKE_CXX_CLANG_TIDY with
+# --warnings-as-errors=* (see CMakePresets.json), so any finding in our code
+# fails the build. clang-analyzer-* is listed explicitly (not relied on via a
+# group default) so a future upstream change cannot silently drop it. cert-* is
+# included for the security-first posture.
+#
+# Disabled checks, with rationale:
+#   - modernize-use-trailing-return-type:
+#       stylistic; the project uses leading return types.
+#   - readability-identifier-length:
+#       math code uses short names (x, P, F, H, S, K) matching the spec's
+#       equations; a minimum-length rule would hurt readability.
+#   - cppcoreguidelines-avoid-magic-numbers / readability-magic-numbers:
+#       re-enabled once named constants exist; noisy against literal matrix
+#       initializers during early milestones.
+#   - misc-include-cleaner:
+#       too aggressive with umbrella headers (Eigen) in this toolchain.
+#   - cert-err58-cpp:
+#       fires on GoogleTest's static TEST() registration objects; not our code.
+
+Checks: >
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  readability-*,
+  misc-*,
+  -modernize-use-trailing-return-type,
+  -readability-identifier-length,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-magic-numbers,
+  -misc-include-cleaner,
+  -cert-err58-cpp
+
+# Enforcement is driven by the preset flag (--warnings-as-errors=*). Leaving this
+# empty keeps ad-hoc `clang-tidy` invocations non-fatal for exploration.
+WarningsAsErrors: ''
+# Analyze our headers: the checked-in include/radar tree, src/, and the
+# generated header under <build>/generated/radar/ (e.g. version.hpp). The
+# generated path is matched so our one public generated header is not exempt.
+HeaderFilterRegex: '.*/(include/radar|src|generated/radar)/.*'
+FormatStyle: file

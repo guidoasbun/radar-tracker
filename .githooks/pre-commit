@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+#
+# radar-tracker pre-commit hook: scan STAGED changes for secrets with gitleaks.
+# Version-controlled under .githooks/ and activated via core.hooksPath (see
+# scripts/setup-hooks.sh). Blocks the commit if a secret is detected.
+#
+# Bypass (use only when you are certain a finding is a false positive):
+#   git commit --no-verify
+# ...and prefer adding a proper allowlist entry to .gitleaks.toml instead.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CONFIG="${REPO_ROOT}/.gitleaks.toml"
+
+# Locate gitleaks (PATH, then common user-local install dir).
+if command -v gitleaks >/dev/null 2>&1; then
+  GITLEAKS="$(command -v gitleaks)"
+elif [ -x "${HOME}/.local/bin/gitleaks" ]; then
+  GITLEAKS="${HOME}/.local/bin/gitleaks"
+else
+  echo "pre-commit: gitleaks not found." >&2
+  echo "  Install it (see scripts/setup-hooks.sh) or bypass once with 'git commit --no-verify'." >&2
+  exit 1
+fi
+
+echo "pre-commit: scanning staged changes for secrets (gitleaks)..."
+# --pre-commit --staged scans the staged git diff (what is about to be committed).
+if ! "${GITLEAKS}" git --pre-commit --staged --no-banner \
+      --config "${CONFIG}" \
+      --redact \
+      --exit-code 1 \
+      "${REPO_ROOT}"; then
+  echo "" >&2
+  echo "pre-commit: BLOCKED — gitleaks detected a potential secret in staged changes." >&2
+  echo "  Review the finding above. If it is a real secret, remove it and rotate it." >&2
+  echo "  If it is a false positive, add an allowlist entry to .gitleaks.toml." >&2
+  exit 1
+fi
+
+echo "pre-commit: no secrets detected."
+exit 0
