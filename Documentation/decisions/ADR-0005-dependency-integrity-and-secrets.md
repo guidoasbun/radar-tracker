@@ -32,7 +32,7 @@ protection. A review raised two valid points:
    are never silently dropped.
 3. **Delegate real secret protection** to tooling that actually inspects content:
    a gitleaks pre-commit hook and GitHub push protection / secret scanning on the
-   public repo. (Enabling these is tracked as a follow-up task.)
+   public repo. **(Both are now implemented — see Status below.)**
 
 ## Consequences
 
@@ -43,11 +43,19 @@ protection. A review raised two valid points:
 - Negative / tradeoffs:
   - SHA pins are less human-readable than tags (mitigated by the tag comment).
   - Bumping a dependency requires resolving the new SHA (a `git ls-remote` away).
-  - gitleaks / push protection must be set up separately (follow-up).
+- Implementation status:
+  - ✅ gitleaks pre-commit hook: `.githooks/pre-commit` + `.gitleaks.toml` (anchored
+    allowlist), activated via `scripts/setup-hooks.sh` (`core.hooksPath=.githooks`).
+    gitleaks is installed from a checksum-verified release binary.
+  - ✅ GitHub secret scanning + push protection enabled on the repo.
+  - ✅ Non-provider (generic) pattern scanning enabled, covering custom tokens the
+    provider rules miss.
+  - ⏳ A gitleaks CI job (unbypassable, unlike the local hook) will be added with the
+    M1 CI workflow.
 - Follow-ups:
-  - Add a gitleaks pre-commit hook and enable GitHub secret scanning + push protection.
   - Consider switching to release-archive URLs + hash (`URL_HASH`) for faster, git-free
     fetches if CI clone time becomes a concern.
+
 
 ## Alternatives considered
 

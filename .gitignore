@@ -54,11 +54,19 @@ gcloud-service-key.json
 !*.tfvars.example
 
 # --------------------------------------------------------------------------
-# BUILD ARTIFACTS  (anchored to repo root)
+# BUILD ARTIFACTS
 # --------------------------------------------------------------------------
+# Root build trees...
 /build/
 /install/
 /_deps/
+# ...and nested ones anywhere (e.g. docker/build/, apps/.../build/) so stray
+# build output is never committed and never scanned-around by tooling.
+build/
+**/build/
+# CLion / JetBrains CMake build dirs (contain _deps/ sources).
+cmake-build-*/
+**/cmake-build-*/
 CMakeUserPresets.json
 
 # Object files / libraries / executables (extensions that are never source)
@@ -81,7 +89,11 @@ lcov.info
 callgrind.out.*
 massif.out.*
 vgcore.*
+# Core dumps — ignored by base name AND the core.<pid> form. These can contain
+# secrets lifted from process memory, so never commit them.
 /core
+core.[0-9]*
+**/core.[0-9]*
 perf.data
 perf.data.old
 

@@ -65,11 +65,19 @@ file included Eigen. Addressed with a second round of fixes, all re-verified:
 - Verified: all 5 presets build 0-warning (our code) on GCC + Clang, 5/5 tests pass,
   clang-format clean, only our tests registered (not Eigen's ~900).
 
-## T8 — Commit
+## T8 — Commit & review
 - [x] Repo already initialized; remote `origin` → github.com/guidoasbun/radar-tracker; default branch renamed `master` → `main`.
 - [x] `.idea/` unstaged and git-ignored.
 - [x] Initial Phase 0 scaffold committed (`ef4b017`) on branch `scaffold-and-toolchain`.
-- [ ] Commit PR-review fixes — pending user go-ahead.
+- [x] Review round 1 fixes committed (`3e8a2cb`).
+- [x] gitleaks pre-commit hook + config committed (`4949564`).
+- [x] Branch renamed on GitHub `scalfold` → `scaffold-and-toolchain`; PR #2 open.
+- [x] Review round 2 (PR #2 re-review) fixes: gitleaks allowlist anchored (N1), ARM-aware
+      hardening (N2), setup-hooks supply-chain hardening (N3), `radar_add_app()` (N4),
+      `_FORTIFY_SOURCE` `-U` guard (N5), README hook docs (N6), `.gitignore` gaps (N7),
+      stale docs (N8), tidy on generated header (N9), implicit-conversion note (N10),
+      repo settings (non-provider scanning + branch protection).
+- [ ] Commit + push review round 2 — pending user go-ahead.
 
 ## Exit criteria
 Phase 0 is complete when every acceptance criterion in `requirements.md` is

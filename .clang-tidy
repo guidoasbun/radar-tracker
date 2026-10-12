@@ -38,5 +38,8 @@ Checks: >
 # Enforcement is driven by the preset flag (--warnings-as-errors=*). Leaving this
 # empty keeps ad-hoc `clang-tidy` invocations non-fatal for exploration.
 WarningsAsErrors: ''
-HeaderFilterRegex: '.*/(include/radar|src)/.*'
+# Analyze our headers: the checked-in include/radar tree, src/, and the
+# generated header under <build>/generated/radar/ (e.g. version.hpp). The
+# generated path is matched so our one public generated header is not exempt.
+HeaderFilterRegex: '.*/(include/radar|src|generated/radar)/.*'
 FormatStyle: file

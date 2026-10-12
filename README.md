@@ -53,6 +53,26 @@ cmake --build --preset ci-clang
 ctest --preset ci-clang --output-on-failure
 ```
 
+## Secret scanning (git hooks)
+
+This repo ships a [gitleaks](https://github.com/gitleaks/gitleaks) pre-commit hook
+that scans staged changes for secrets and blocks the commit if one is found.
+After cloning, activate it once:
+
+```bash
+./scripts/setup-hooks.sh
+```
+
+This points `core.hooksPath` at the tracked `.githooks/` directory and checks that
+`gitleaks` is installed (the script prints a checksum-verified install command if
+it is not). Hook config lives in `.gitleaks.toml`.
+
+- Bypass a single commit only when you are certain a finding is a false positive:
+  `git commit --no-verify` — and prefer adding an allowlist entry to `.gitleaks.toml`.
+- The hook is local and can be skipped, so it is a convenience, not the last line of
+  defence. GitHub **push protection + secret scanning** are enabled on the repo, and a
+  **gitleaks CI job** (which cannot be bypassed) will be added with the M1 CI workflow.
+
 ## License
 
 [MIT](LICENSE) © 2026 Guido Asbun

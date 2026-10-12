@@ -31,8 +31,8 @@ the filter is the keystone the entire project depends on.
 
 | Phase | Name | Spec milestone | Gate (one-line definition of done) | Status |
 | --- | --- | --- | --- | --- |
-| 0 | Scaffold & toolchain | pre-M1 | Clean clone configures + builds + a trivial test passes under all presets | NEXT |
-| M1 | Single target | M1 (v0.1) | `single.json` runs; track RMSE ≤ 0.5 × raw RMSE; plot in README; CI green | planned |
+| 0 | Scaffold & toolchain | pre-M1 | Clean clone configures + builds + tests pass under all presets; two review rounds addressed | ✅ done (PR #2) |
+| M1 | Single target | M1 (v0.1) | `single.json` runs; track RMSE ≤ 0.5 × raw RMSE; plot in README; CI green | NEXT |
 | K | Kalman verification | within M1 | Full six-group filter verification battery passes (see phase-K docs) | planned |
 | M2 | Multi-target + clutter | M2 (v0.2) | baseline clears all thresholds; crossing keeps identities; dense_clutter ≤ 1 false track | planned |
 | M3 | Two services over UDP | M3 (v0.3) | `docker compose up` leaves metrics.json; UDP tracks match in-process on same seed | planned |

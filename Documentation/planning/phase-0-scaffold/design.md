@@ -135,6 +135,7 @@ To exercise the full build→link→test path and the Eigen path specifically:
 | A dependency SHA doesn't build on GCC 14 / Clang 21 | deps pinned by full commit SHA; record any bump here and in the overview table |
 | `-Wconversion`/`-Wsign-conversion` fire inside Eigen | deps declared with the `SYSTEM` keyword → `-isystem`, so their warnings never reach our `-Werror`; verified by `test_linalg.cpp` |
 | Eigen registers its own ~900-test suite into CTest | `BUILD_TESTING=OFF` set (non-FORCE) before Eigen is populated; only our tests are discovered |
+| `-fsanitize=implicit-conversion` (asan preset) may fire inside Eigen/nlohmann templates used by our code — it flags *defined* behaviour (e.g. intentional unsigned wrap in hashing), and `-fno-sanitize-recover=all` makes it fatal | Watch item for M1. If third-party false positives appear, add a sanitizer **ignorelist** (`-fsanitize-ignorelist=`) scoped to the offending third-party paths rather than dropping the check. Do **not** remove `implicit-conversion` wholesale. |
 
 ## 8. Decisions recorded as ADRs
 

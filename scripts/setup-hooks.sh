@@ -20,16 +20,26 @@ if command -v gitleaks >/dev/null 2>&1 || [ -x "${HOME}/.local/bin/gitleaks" ]; 
 else
   cat >&2 <<'EOF'
 
-gitleaks is NOT installed. Install one of these ways:
+gitleaks is NOT installed. Install it securely with ONE of these:
 
-  # Official release binary (no root), x86_64 Linux:
+  # ---- Official release binary (no root), x86_64 Linux, WITH checksum verify ----
   VER=8.30.1
-  curl -sSL -o /tmp/gl.tgz \
-    "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz"
-  mkdir -p "$HOME/.local/bin" && tar -xzf /tmp/gl.tgz -C "$HOME/.local/bin" gitleaks
+  TMP="$(mktemp -d)"                       # private temp dir (no fixed /tmp path)
+  BASE="https://github.com/gitleaks/gitleaks/releases/download/v${VER}"
+  curl -sSL -o "$TMP/gl.tgz"        "$BASE/gitleaks_${VER}_linux_x64.tar.gz"
+  curl -sSL -o "$TMP/checksums.txt" "$BASE/gitleaks_${VER}_checksums.txt"
+  ( cd "$TMP" \
+    && mv gl.tgz "gitleaks_${VER}_linux_x64.tar.gz" \
+    && sha256sum -c --ignore-missing checksums.txt )   # ABORTS on mismatch
+  mkdir -p "$HOME/.local/bin"
+  tar -xzf "$TMP/gitleaks_${VER}_linux_x64.tar.gz" -C "$HOME/.local/bin" gitleaks
+  rm -rf "$TMP"
 
-  # macOS:            brew install gitleaks
-  # Go toolchain:     go install github.com/gitleaks/gitleaks/v8@latest
+  # ---- macOS ----
+  brew install gitleaks
+
+  # ---- Go toolchain (version PINNED, never @latest) ----
+  go install github.com/gitleaks/gitleaks/v8@v8.30.1
 
 Ensure the install dir is on your PATH, then re-run this script.
 EOF

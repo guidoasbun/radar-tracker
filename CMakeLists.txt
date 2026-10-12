@@ -67,16 +67,27 @@ if(RADAR_WERROR)
 endif()
 
 # ---- Hardening (OpenSSF compiler-hardening guide) --------------------------
-# Enabled by release/ci presets. _FORTIFY_SOURCE needs an optimizing build, so
-# it is gated on non-Debug configurations.
+# Enabled by release/ci presets. Architecture-aware: control-flow protection
+# uses -fcf-protection on x86 (CET) and -mbranch-protection on ARM; neither flag
+# is portable across both. _FORTIFY_SOURCE needs an optimizing build, and some
+# distros predefine it — so we -U it first to avoid a "redefined" -Werror.
 add_library(radar_hardening INTERFACE)
 if(RADAR_HARDENING)
   target_compile_options(radar_hardening INTERFACE
+    # -U before -D so a distro-predefined _FORTIFY_SOURCE cannot clash (N5).
+    $<$<NOT:$<CONFIG:Debug>>:-U_FORTIFY_SOURCE>
     $<$<NOT:$<CONFIG:Debug>>:-D_FORTIFY_SOURCE=3>
     -D_GLIBCXX_ASSERTIONS
     -fstack-protector-strong
-    -fstack-clash-protection
-    -fcf-protection=full)
+    -fstack-clash-protection)
+
+  # Control-flow integrity: pick the flag that exists on the target arch (N2).
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i[3-6]86")
+    target_compile_options(radar_hardening INTERFACE -fcf-protection=full)
+  elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|armv8")
+    target_compile_options(radar_hardening INTERFACE -mbranch-protection=standard)
+  endif()
+
   target_link_options(radar_hardening INTERFACE
     -Wl,-z,relro,-z,now
     -Wl,-z,noexecstack
@@ -88,6 +99,27 @@ include(cmake/Dependencies.cmake)
 
 # ---- Library ---------------------------------------------------------------
 add_subdirectory(src)
+
+# Helper: define an application executable with the SAME security posture as the
+# library — warnings, hardening, and clang-tidy all applied automatically. Use
+# this for every executable under apps/ (radar_sim, radar_tracker, ...), which
+# are the binaries that handle untrusted input, so hardening is never forgotten.
+# Usage: radar_add_app(radar_sim main.cpp foo.cpp)
+function(radar_add_app name)
+  add_executable(${name} ${ARGN})
+  target_link_libraries(${name}
+    PRIVATE
+      radar::radar
+      radar_warnings
+      radar_hardening)
+  target_compile_features(${name} PRIVATE cxx_std_20)
+  radar_enable_tidy(${name})
+endfunction()
+
+# ---- Applications (added from M1 onward) -----------------------------------
+if(EXISTS "${PROJECT_SOURCE_DIR}/apps/CMakeLists.txt")
+  add_subdirectory(apps)
+endif()
 
 # ---- Tests -----------------------------------------------------------------
 if(RADAR_BUILD_TESTS)

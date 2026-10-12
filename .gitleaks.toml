@@ -1,29 +1,37 @@
 # gitleaks configuration for radar-tracker.
-# Extends gitleaks' built-in ruleset (do NOT replace it) and adds a project
-# allowlist so legitimate files don't trip the scanner. See ADR-0005.
+# Extends gitleaks' built-in ruleset (do NOT replace it) and adds a TIGHT,
+# anchored allowlist so legitimate files don't trip the scanner — without
+# opening holes that hide real secrets. See ADR-0005.
+#
+# Design rules for the allowlist (learned from review):
+#   * Path patterns are ANCHORED (^...) so they match only at the intended
+#     location, never at arbitrary depth. A nested docker/build/ is NOT exempt.
+#   * Only specific CONFIG file types may be exempted as *.example/*.sample —
+#     never source code (.cpp/.hpp/.py), which must always be scanned.
+#   * Placeholder regexes are anchored to the WHOLE secret value (^...$) so a
+#     real secret that merely *contains* "xxxx" or "<FOO>" is not suppressed.
 
 [extend]
 # Inherit all of gitleaks' default secret-detection rules.
 useDefault = true
 
 [allowlist]
-description = "radar-tracker allowlisted paths and patterns"
+description = "radar-tracker allowlisted paths and patterns (anchored)"
 
-# Paths that never contain real secrets. Example/template files are expected to
-# hold placeholder values, and generated run output under out/ is git-ignored.
+# Root-level dotenv templates and the root build/out trees only. Anchored with
+# ^ so nested look-alikes (docker/build/, apps/.../out/) are still scanned.
 paths = [
-  '''\.env\.example$''',
-  '''\.env\.sample$''',
-  '''.*\.example(\..*)?$''',
-  '''.*\.sample$''',
-  '''(^|/)out/''',
-  '''(^|/)build/''',
+  '''^\.env\.(example|sample)$''',
+  '''^(build|out)/''',
+  # Example/sample CONFIG files only — explicit extensions, not source code.
+  '''\.(env|json|ya?ml|yml|toml|ini|cfg|conf)\.(example|sample)$''',
 ]
 
-# Common non-secret placeholders used in docs/specs/sample configs.
+# Whole-value placeholders only (anchored ^...$), so a secret that merely
+# contains one of these substrings is NOT allowlisted.
 regexes = [
-  '''(?i)your[_-]?(api[_-]?key|token|secret|password)[_-]?here''',
-  '''(?i)example[_-]?(key|token|secret)''',
-  '''xxxx+''',
-  '''<[A-Z_]+>''',
+  '''(?i)^your[_-]?(api[_-]?key|token|secret|password)[_-]?here$''',
+  '''(?i)^example[_-]?(key|token|secret)$''',
+  '''^x{4,}$''',
+  '''^<[A-Z_]+>$''',
 ]
