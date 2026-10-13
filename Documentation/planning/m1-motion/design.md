@@ -130,8 +130,12 @@ clang-tidy/`-Werror` liability); the design note above is the forward contract.
 8. **Finite-input precondition** — `NDEBUG`-guarded death tests (`MotionDeathTest`) assert
    that a non-finite `dt` or `x` aborts; they run under `debug`/`asan` where asserts are live
    and are compiled out of `release`/`ci`.
-9. **No `TrackState` overload (compile-time)** — a `static_assert` that `propagate_cv` is not
-   invocable with a `TrackState`, pinning the "state vector only, P is kalman's" contract.
+9. **No `TrackState` overload (compile-time)** — a `CvPropagatable` concept with a positive
+   control (`CvPropagatable<Eigen::Vector4d>`) and a negative guard
+   (`!CvPropagatable<TrackState>`), pinning the "state vector only, P is kalman's" contract.
+   A concept (not `is_invocable_v<decltype(propagate_cv), …>`) is used because `decltype` of
+   an overloaded function is ill-formed and would make a future overload a confusing compile
+   error rather than a clear assertion.
 
 ## 6. Risks / watch items
 

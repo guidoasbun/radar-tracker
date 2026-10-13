@@ -91,8 +91,13 @@ independent check (see Deviations / common-mode note).
 - `propagate_cv` advances the state vector `x` only. There is deliberately **no**
   `TrackState` overload: truth has no covariance, and `P` propagation (`F·P·Fᵀ + Q`,
   including the process noise `Q`) is the filter's job in `kalman`. This is enforced at
-  compile time by a `static_assert` in the test that `propagate_cv` is not invocable with a
-  `TrackState`, so the contract cannot silently drift (it is not merely documented).
+  compile time by a `CvPropagatable` concept in the test — `static_assert(CvPropagatable
+  <Eigen::Vector4d>)` as a positive control and `static_assert(!CvPropagatable<TrackState>)`
+  as the guard — so the contract cannot silently drift. (A concept is used rather than
+  `is_invocable_v<decltype(propagate_cv), …>` because `decltype` of an overloaded function is
+  ill-formed, which would turn a future `TrackState` overload into a confusing compile error
+  instead of a clear assertion; the concept works with overloads and matches the
+  `detail::HasOrigin` pattern in `types.hpp`.)
 
 ### AC-6 — Finite-input precondition
 - `propagate_cv` (and `cv_transition_matrix`) assert finite `dt` (and finite `x`) in
@@ -134,3 +139,5 @@ CT check and a square-flagging check. This phase deviates deliberately in three 
 `dt_s` and non-finite target states at the scenario boundary, so a malformed or hostile
 scenario fails loudly instead of silently producing a NaN truth trajectory (which would
 poison RMSE downstream). Record this as an acceptance criterion in the `io` planning docs.
+Tracked as **GitHub issue #5** (and the `kalman` hand-computed-`F·x` note as **issue #6**) so
+these cross-module follow-ups are not lost in the motion docs alone.

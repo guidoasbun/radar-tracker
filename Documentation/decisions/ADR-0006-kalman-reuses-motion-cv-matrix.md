@@ -37,8 +37,8 @@ than defining its own.
 
 The one-way dependency rule from `00-overview.md` ("nothing from `tracker` downward
 includes `io` or `net`") is **not** violated: `motion` is a pure, lower-level math module
-with no I/O, and the new edge points *upward* from `kalman` to `motion`, not toward `io`/
-`net`. The dependency graph remains acyclic.
+with no I/O, and the new edge points *from `kalman` down to the lower-level `motion`*, not
+toward `io`/`net`. The dependency graph remains acyclic.
 
 ## Consequences
 

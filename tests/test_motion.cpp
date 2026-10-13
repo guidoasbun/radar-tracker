@@ -12,7 +12,6 @@
 
 #include <Eigen/Core>
 #include <limits>
-#include <type_traits>
 
 #include "radar/motion.hpp"
 #include "radar/types.hpp"
@@ -23,8 +22,17 @@ constexpr double kDt = 0.1;  // spec scan interval (s)
 
 // M3: motion propagates a plain state vector by design (truth has no covariance);
 // there must be no TrackState overload that would propagate P. Enforce it at
-// compile time so the signature contract can't silently drift.
-static_assert(!std::is_invocable_v<decltype(radar::propagate_cv)&, radar::TrackState, double>,
+// compile time so the signature contract can't silently drift. A concept is used
+// (not is_invocable_v<decltype(propagate_cv), ...>) because decltype of an
+// overloaded function is ill-formed: the moment a second overload exists the
+// assertion would fail to compile with "cannot resolve address of overloaded
+// function" instead of reporting its message. The concept keeps working with
+// overloads and matches the detail::HasOrigin pattern in types.hpp.
+template <class S>
+concept CvPropagatable = requires(const S& s) { radar::propagate_cv(s, 0.0); };
+
+static_assert(CvPropagatable<Eigen::Vector4d>, "propagate_cv must accept a plain state vector");
+static_assert(!CvPropagatable<radar::TrackState>,
               "propagate_cv must not accept a TrackState (P-propagation is kalman's job)");
 
 // Propagate `x0` by `steps` CV steps of `kDt`. Factored out so the test bodies
@@ -51,7 +59,8 @@ TEST(Motion, CvTransitionMatrixEqualsSpecLiteral) {
               0.0, 0.0, 1.0, 0.0,
               0.0, 0.0, 0.0, 1.0;
   // clang-format on
-  EXPECT_TRUE(radar::cv_transition_matrix(kDt).isApprox(expected));
+  // Exact: every entry of F is assigned exactly (1.0, 0.0, or dt), so demand ==.
+  EXPECT_TRUE((radar::cv_transition_matrix(kDt).array() == expected.array()).all());
 }
 
 TEST(Motion, CvTransitionMatrixAtZeroIsIdentity) {
@@ -151,10 +160,15 @@ TEST(MotionDeathTest, NonFiniteDtAborts) {
   const Eigen::Vector4d x0{1.0, 2.0, 0.0, 0.0};
   EXPECT_DEATH((void)radar::propagate_cv(x0, std::numeric_limits<double>::quiet_NaN()),
                "dt must be finite");
+  // isfinite rejects infinity as well as NaN.
+  EXPECT_DEATH((void)radar::propagate_cv(x0, std::numeric_limits<double>::infinity()),
+               "dt must be finite");
 }
 
 TEST(MotionDeathTest, NonFiniteStateAborts) {
-  const Eigen::Vector4d bad{1.0, 2.0, std::numeric_limits<double>::quiet_NaN(), 0.0};
-  EXPECT_DEATH((void)radar::propagate_cv(bad, kDt), "x must be finite");
+  const Eigen::Vector4d nan_state{1.0, 2.0, std::numeric_limits<double>::quiet_NaN(), 0.0};
+  EXPECT_DEATH((void)radar::propagate_cv(nan_state, kDt), "x must be finite");
+  const Eigen::Vector4d inf_state{1.0, 2.0, std::numeric_limits<double>::infinity(), 0.0};
+  EXPECT_DEATH((void)radar::propagate_cv(inf_state, kDt), "x must be finite");
 }
 #endif  // NDEBUG
