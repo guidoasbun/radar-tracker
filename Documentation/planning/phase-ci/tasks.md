@@ -32,17 +32,39 @@
       event-range scan on push/PR, `--log-opts=--all` on `schedule`+`workflow_dispatch`.
 - [x] **M1** — `actions/checkout` + `actions/cache` pinned to SHAs (verified vs upstream v4);
       added `.github/dependabot.yml` (github-actions, weekly).
-- [x] **M3** — install clang/clang-tidy **21** from apt.llvm.org via `update-alternatives` so
-      CI's linter matches local (presets unchanged).
+- [x] **M3** — install clang/clang-tidy **21** from apt.llvm.org and point `/usr/bin/clang*`
+      at them with `ln -sf` + a version **assertion** (see T6: `update-alternatives` silently
+      failed). Presets unchanged.
 - [x] **M4** — `cancel-in-progress` only on `pull_request`.
 - [x] **L1** — `persist-credentials: false` on both checkouts.
-- [x] **L2** — cache only `_deps/*-src`; corrected the cache comment.
+- [x] **L2** — cache `_deps/*-src` **and** `_deps/*-subbuild` (corrected in T6; `*-src` alone
+      was never reused); corrected the cache comment.
 - [x] **L3** — `timeout-minutes` (30 build / 10 gitleaks).
 - [x] **L5** — doc fixes: ADR-0005 status, design §1 job IDs / §2 scan range + H1 note / §3
       CMake + clang-21, requirements AC-4, README table.
 - [x] **H1** — required the four checks in branch protection via `gh api` (strict + enforce_admins
       on; verified). The scan is now genuinely unbypassable. Caveat documented: checks match by
       display name, so keep matrix `name:` values and the branch-protection list in sync.
+
+## T6 — follow-up review fixes (@ `037b64d`)
+- [x] **M3 blocker** — the first M3 fix didn't take: `update-alternatives --install` doesn't
+      override the runner's existing plain `/usr/bin/clang` symlink (warns, exits 0), so CI
+      kept **clang 18** while docs claimed 21 (confirmed in the run log). Replaced with
+      `ln -sf` and added version assertions (`clang --version | grep -q 'clang version 21.'`,
+      same for clang-tidy) so a silent fallback now fails the job. Added `libclang-rt-21-dev`
+      for the asan link.
+- [x] **Cache never reused** — FetchContent's stamp files live in `_deps/*-subbuild`; caching
+      `*-src` alone meant a hit still `rm -rf`+re-cloned. Now caches both `*-src` and
+      `*-subbuild`, with the preset back in the key; comment corrected.
+- [x] **Scan wording** — `gitleaks git` (no `--log-opts`) scans all commits reachable from
+      HEAD, not "new commits only"; corrected the step echo, comment, ADR-0005 and design §2.
+- [x] **LLVM apt key pinned** — fetched to its own keyring, fingerprint-checked against
+      `6084F3CF…F7421`, referenced via `signed-by=` (not trusted repo-wide in `trusted.gpg.d`).
+- [x] **ADR-0005 stale caveat** — "until then a red PR can still be merged" updated (required
+      checks are on).
+- [ ] **Re-verify on CI** — push and confirm the build jobs really run clang 21; expect
+      clang-tidy 21 may surface new findings on our code (the point of the fix) — fix any
+      before the required checks go green.
 
 ## Exit criteria
 All ACs met and the PR #7 review addressed: the matrix + checksum-verified gitleaks run on

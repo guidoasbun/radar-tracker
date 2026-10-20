@@ -59,36 +59,64 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y ninja-build
-          # Match the local linter version (clang/clang-tidy 21): the distro ships 18,
-          # which has FEWER checks, so CI would enforce less than local (drift). Install
-          # 21 from the official LLVM apt repo and point the unversioned names at it so
-          # the CMake presets need no changes. (M3 from the PR #7 review.)
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          sudo apt-get install -y ninja-build gpg
+
+          # Match the local linter version (clang/clang-tidy 21). The distro ships 18,
+          # which has FEWER checks, so CI would silently enforce less than local (drift).
+          # Install 21 from the official LLVM apt repo. (M3 from the PR #7 review.)
+          #
+          # Key handling (hardened per the follow-up review): fetch the LLVM archive key
+          # into its OWN keyring, verify its fingerprint against the one apt.llvm.org
+          # publishes, and scope it to the LLVM repo via signed-by — instead of dropping
+          # it into /etc/apt/trusted.gpg.d where apt would trust it for EVERY repo.
+          LLVM_FPR="6084F3CF814B57C1CF12EFD515CF4D18AF4F7421"
+          wget -qO /tmp/llvm.key https://apt.llvm.org/llvm-snapshot.gpg.key
+          gpg --show-keys --with-colons --with-fingerprint /tmp/llvm.key \
+            | grep -q "^fpr:::::::::${LLVM_FPR}:" \
+            || { echo "LLVM apt key fingerprint mismatch (expected ${LLVM_FPR})"; exit 1; }
+          sudo install -m 0644 /tmp/llvm.key /usr/share/keyrings/llvm.asc
           source /etc/os-release
-          echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" \
+          echo "deb [signed-by=/usr/share/keyrings/llvm.asc] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" \
             | sudo tee /etc/apt/sources.list.d/llvm-21.list >/dev/null
           sudo apt-get update
-          sudo apt-get install -y clang-21 clang-tidy-21
-          sudo update-alternatives --install /usr/bin/clang        clang        /usr/bin/clang-21 100
-          sudo update-alternatives --install /usr/bin/clang++      clang++      /usr/bin/clang++-21 100
-          sudo update-alternatives --install /usr/bin/clang-tidy   clang-tidy   /usr/bin/clang-tidy-21 100
+          # libclang-rt-21-dev: ASan/UBSan runtimes, needed when the asan preset links
+          # with clang-21 (ADR-0004).
+          sudo apt-get install -y clang-21 clang-tidy-21 libclang-rt-21-dev
+
+          # Point the unversioned names at 21 so the CMake presets need no changes.
+          # Use ln -sf, NOT update-alternatives: the runner's /usr/bin/clang is a plain
+          # symlink that update-alternatives won't take over (it warns and exits 0, so
+          # `set -e` never fires) — which is exactly why the first attempt silently kept
+          # clang 18. Replace the links outright, then ASSERT the version so a silent
+          # fallback fails the job instead of shipping docs that claim a control CI
+          # isn't running.
+          sudo ln -sf /usr/bin/clang-21      /usr/bin/clang
+          sudo ln -sf /usr/bin/clang++-21    /usr/bin/clang++
+          sudo ln -sf /usr/bin/clang-tidy-21 /usr/bin/clang-tidy
           cmake --version
           clang --version
           clang-tidy --version
+          clang --version      | grep -q 'clang version 21\.' \
+            || { echo "ERROR: clang is not 21"; exit 1; }
+          clang-tidy --version | grep -q 'LLVM version 21\.' \
+            || { echo "ERROR: clang-tidy is not 21"; exit 1; }
 
       - name: Cache dependencies
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
         with:
-          # Cache only the fetched SOURCE trees (preset-independent, identical across
-          # presets), not the per-preset build/subbuild dirs. Keyed on Dependencies.cmake:
-          # a pin change produces a new key; restore-keys may seed from an older cache,
-          # after which FetchContent re-fetches the new SHA (so builds stay correct).
-          path: build/${{ matrix.preset }}/_deps/*-src
-          key: deps-src-${{ hashFiles('cmake/Dependencies.cmake') }}
+          # Cache the fetched sources AND the FetchContent subbuild stamp dirs. The stamp
+          # files live in _deps/*-subbuild; without them the clone script does rm -rf +
+          # re-clone on a hit, so caching *-src alone saved nothing. The path is
+          # per-preset, so the key is too (actions/cache treats a different path as a
+          # different entry anyway). A Dependencies.cmake change makes a new key;
+          # restore-keys may seed from an older cache, after which FetchContent re-fetches
+          # the new SHA — so a stale cache is only slower, never wrong.
+          path: |
+            build/${{ matrix.preset }}/_deps/*-src
+            build/${{ matrix.preset }}/_deps/*-subbuild
+          key: deps-${{ matrix.preset }}-${{ hashFiles('cmake/Dependencies.cmake') }}
           restore-keys: |
-            deps-src-
+            deps-${{ matrix.preset }}-
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
@@ -129,15 +157,17 @@ jobs:
           rm -rf "$TMP"
           gitleaks version
 
-      # push/pull_request: scan only the event's commit range (fast gate on new commits).
-      # schedule/workflow_dispatch: scan ALL history (the real full-history control).
+      # schedule/workflow_dispatch: scan ALL history, including unreachable/other refs
+      #   (gitleaks git --log-opts=--all).
+      # push/pull_request: gitleaks git with no --log-opts scans everything reachable from
+      #   HEAD (not just the new commits) — a superset of the event range, which is fine.
       - name: Scan
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Full-history scan (gitleaks git --all)"
+            echo "Full-history scan: all refs (gitleaks git --log-opts=--all)"
             gitleaks git --redact --no-banner --config .gitleaks.toml --log-opts="--all" .
           else
-            echo "Event-range scan (new commits only)"
+            echo "Scan all commits reachable from HEAD"
             gitleaks git --redact --no-banner --config .gitleaks.toml .
           fi

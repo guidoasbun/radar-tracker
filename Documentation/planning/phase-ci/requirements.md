@@ -26,7 +26,7 @@ In scope:
   - `ci-clang` preset — Clang, same strict set.
   - `asan` preset — Clang ASan/UBSan, **runs `ctest`** so the asserts and death tests
     actually execute (the N2 fix). The spec mandates ASan/UBSan "on every push."
-- A **gitleaks** job that scans the event's commit range on every push/PR, plus a weekly
+- A **gitleaks** job that scans all commits reachable from HEAD on every push/PR, plus a weekly
   `schedule` + `workflow_dispatch` that scan **full history** (`--log-opts=--all`). It uses the
   same pinned, checksum-verified gitleaks binary as the local hook — independent of the local
   pre-commit hook and not skippable by contributors.
@@ -57,7 +57,7 @@ the job.
 ### AC-4 — Checksum-verified secret scan, unbypassable once required
 A gitleaks job runs the **same** pinned, checksum-verified gitleaks 8.30.1 binary as the local
 hook (`sha256sum -c`, ADR-0005) with the tracked `.gitleaks.toml`. On push/PR it scans the
-event's commit range; a weekly `schedule` and `workflow_dispatch` scan **full history**
+all commits reachable from HEAD; a weekly `schedule` and `workflow_dispatch` scan **all history** (all refs)
 (`--log-opts=--all`). It is server-side, so unlike the local hook it cannot be skipped with
 `--no-verify`. A finding fails the job. **Caveat (H1):** the job only *blocks* a merge once it
 is set as a required status check in branch protection — tracked separately, since that is a

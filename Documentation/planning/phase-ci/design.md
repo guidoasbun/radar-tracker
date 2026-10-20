@@ -50,11 +50,11 @@ PRs waiting on a now-missing required check until branch protection is updated t
   ADR-0005), verifying the download with `sha256sum -c` against the identical pinned hash, and
   run `gitleaks git --redact --no-banner --config .gitleaks.toml`. This closes the version gap
   (CI now runs the same rules as local), the checksum gap, and the license dependency.
-  - **Scan range (important).** On `push`/`pull_request` gitleaks scans only the event's
-    commit range — a fast gate on new commits. Genuine **full-history** scanning (`--log-opts
-    =--all`) runs on a weekly `schedule` and on `workflow_dispatch`. `fetch-depth: 0` makes the
-    full history available for those runs. (This corrects the earlier claim that every run
-    scanned full history.)
+  - **Scan range.** On `push`/`pull_request` gitleaks scans all commits **reachable from
+    HEAD** (`gitleaks git` with no `--log-opts`) — a superset of the event's new commits. The
+    weekly `schedule` and `workflow_dispatch` runs add `--log-opts=--all` to also cover history
+    not reachable from HEAD (all refs). `fetch-depth: 0` makes full history available for those
+    runs. (This corrects an earlier claim that the push/PR scan covered only the event range.)
   - **"Unbypassable" has a precondition.** The job only *blocks* a merge once it is set as a
     **required status check** in branch protection; otherwise a red PR can still be merged.
     See the H1 note below. With `enforce_admins` already on, requiring the checks binds the
@@ -95,10 +95,17 @@ by default, and the `ci` presets require clang-tidy. The jobs install what they 
 - **Clang/clang-tidy 21** for every build job. The distro ships clang-tidy 18, which has
   fewer checks than the local 21 — so CI would silently enforce *less* than local (e.g.
   `readability-math-missing-parentheses`, added in tidy 19, caught a real issue in PR #4).
-  We install `clang-21`/`clang-tidy-21` from the official LLVM apt repo (signed key) and point
-  the unversioned `clang`/`clang++`/`clang-tidy` at them via `update-alternatives`, so the
-  CMake presets need no changes and CI's linter matches local. (The GCC `ci` job also needs
-  clang-tidy because the `ci` preset enables `RADAR_CLANG_TIDY`.)
+  We install `clang-21`/`clang-tidy-21` from the official LLVM apt repo and point the
+  unversioned `clang`/`clang++`/`clang-tidy` at them. **`ln -sf`, not `update-alternatives`:**
+  the runner's `/usr/bin/clang` is a plain symlink that `update-alternatives --install` will
+  not take over (it warns and exits 0, so `set -e` never fires) — the first attempt did this
+  and silently kept clang 18 while the docs claimed 21. We replace the links outright and then
+  **assert** `clang --version`/`clang-tidy --version` report 21, so a silent fallback fails the
+  job. The LLVM apt key is fetched into its own keyring, **fingerprint-verified**
+  (`6084F3CF…F7421`) and scoped with `signed-by=`, rather than trusted repo-wide in
+  `trusted.gpg.d` — matching ADR-0005's integrity discipline. `libclang-rt-21-dev` is installed
+  for the asan job's sanitizer runtimes. (The GCC `ci` job also needs clang-tidy because the
+  `ci` preset enables `RADAR_CLANG_TIDY`.)
 - CMake ≥ 3.25 is required (for the `SYSTEM` FetchContent keyword); `ubuntu-24.04` ships 3.31,
   so no pin is needed.
 

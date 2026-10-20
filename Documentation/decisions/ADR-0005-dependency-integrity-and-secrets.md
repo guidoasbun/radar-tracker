@@ -54,12 +54,12 @@ protection. A review raised two valid points:
     Settings → Code security → Secret scanning → "Scan for non-provider patterns".
   - ✅ A gitleaks CI job runs on every push and pull request (`.github/workflows/ci.yml`),
     installing the **same** pinned, checksum-verified gitleaks 8.30.1 binary this ADR
-    specifies for the local hook (`sha256sum -c`), not a mutable action. Two caveats, both
-    tracked: (a) it is only truly *unbypassable* once the four CI checks are set as
-    **required status checks** in branch protection (see phase-ci design §2 / the H1 note) —
-    until then a red PR can still be merged; (b) on push/PR it scans only the event's commit
-    range, so a weekly `schedule` + `workflow_dispatch` run `gitleaks git --log-opts=--all`
-    for the genuine full-history scan.
+    specifies for the local hook (`sha256sum -c`), not a mutable action. Two notes:
+    (a) it is *unbypassable* because the four CI checks are now set as **required status
+    checks** on `main` (`strict: true`, `enforce_admins` on; see phase-ci design §2 / H1) —
+    a red PR cannot be merged, owner included; (b) on push/PR it scans all commits reachable
+    from HEAD, and a weekly `schedule` + `workflow_dispatch` run `gitleaks git
+    --log-opts=--all` to also cover history not reachable from HEAD (all refs).
 - Follow-ups:
   - Enable non-provider pattern scanning via the web UI (see above).
   - Consider switching to release-archive URLs + hash (`URL_HASH`) for faster, git-free
