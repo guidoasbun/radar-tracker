@@ -3,7 +3,8 @@
 # tests/ link against this target.
 
 add_library(radar STATIC
-  linalg.cpp)
+  linalg.cpp
+  motion.cpp)
 
 # Public headers: the checked-in include/ tree plus the generated version header
 # under the build dir. Use PROJECT_SOURCE_DIR/PROJECT_BINARY_DIR so the library
