@@ -1,0 +1,173 @@
+# CI — build + test matrix and a checksum-verified secret scan.
+#
+# Build jobs run exactly the local presets (cmake --preset X && build && ctest) so CI
+# and local developer runs cannot drift. The asan job is the only place the finite-input
+# asserts and death tests execute, because the ci/ci-clang presets inherit -DNDEBUG from
+# release. See Documentation/planning/phase-ci/ and ADR-0002 / ADR-0004 / ADR-0005.
+#
+# Action pins: third-party actions are pinned to full 40-char commit SHAs (not mutable
+# @vN tags), matching ADR-0005's dependency-pinning policy. Dependabot
+# (.github/dependabot.yml) keeps the SHAs updated. The comment after each SHA is the tag
+# it corresponded to when pinned.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Full-history secret scan: the per-event scan below only covers the push/PR commit
+  # range, so a weekly cron and a manual trigger run `gitleaks git` over ALL history.
+  schedule:
+    - cron: "17 4 * * 1"  # Mondays 04:17 UTC
+  workflow_dispatch:
+
+# Least privilege: jobs only read the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # Only cancel superseded PR runs; never cancel a run on main (each main commit must
+  # get its own finished test run and push-range secret scan).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    # Skip the pure-scan triggers; building on cron/dispatch adds nothing.
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc (ci preset)
+            preset: ci
+          - name: clang (ci-clang preset)
+            preset: ci-clang
+          - name: asan (Clang, ASan/UBSan)
+            preset: asan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false  # no later step needs the git token
+
+      - name: Install toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ninja-build gpg
+
+          # Match the local linter version (clang/clang-tidy 21). The distro ships 18,
+          # which has FEWER checks, so CI would silently enforce less than local (drift).
+          # Install 21 from the official LLVM apt repo. (M3 from the PR #7 review.)
+          #
+          # Key handling (hardened per the follow-up review): fetch the LLVM archive key
+          # into its OWN keyring, verify its fingerprint against the one apt.llvm.org
+          # publishes, and scope it to the LLVM repo via signed-by — instead of dropping
+          # it into /etc/apt/trusted.gpg.d where apt would trust it for EVERY repo.
+          LLVM_FPR="6084F3CF814B57C1CF12EFD515CF4D18AF4F7421"
+          wget -qO /tmp/llvm.key https://apt.llvm.org/llvm-snapshot.gpg.key
+          gpg --show-keys --with-colons --with-fingerprint /tmp/llvm.key \
+            | grep -q "^fpr:::::::::${LLVM_FPR}:" \
+            || { echo "LLVM apt key fingerprint mismatch (expected ${LLVM_FPR})"; exit 1; }
+          sudo install -m 0644 /tmp/llvm.key /usr/share/keyrings/llvm.asc
+          source /etc/os-release
+          echo "deb [signed-by=/usr/share/keyrings/llvm.asc] http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm-21.list >/dev/null
+          sudo apt-get update
+          # libclang-rt-21-dev: ASan/UBSan runtimes, needed when the asan preset links
+          # with clang-21 (ADR-0004).
+          sudo apt-get install -y clang-21 clang-tidy-21 libclang-rt-21-dev
+
+          # Point the unversioned names at 21 so the CMake presets need no changes.
+          # Use ln -sf, NOT update-alternatives: the runner's /usr/bin/clang is a plain
+          # symlink that update-alternatives won't take over (it warns and exits 0, so
+          # `set -e` never fires) — which is exactly why the first attempt silently kept
+          # clang 18. Replace the links outright, then ASSERT the version so a silent
+          # fallback fails the job instead of shipping docs that claim a control CI
+          # isn't running.
+          sudo ln -sf /usr/bin/clang-21      /usr/bin/clang
+          sudo ln -sf /usr/bin/clang++-21    /usr/bin/clang++
+          sudo ln -sf /usr/bin/clang-tidy-21 /usr/bin/clang-tidy
+          cmake --version
+          clang --version
+          clang-tidy --version
+          clang --version      | grep -q 'clang version 21\.' \
+            || { echo "ERROR: clang is not 21"; exit 1; }
+          clang-tidy --version | grep -q 'LLVM version 21\.' \
+            || { echo "ERROR: clang-tidy is not 21"; exit 1; }
+
+      - name: Cache dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          # Cache the fetched sources AND the FetchContent subbuild stamp dirs. The stamp
+          # files live in _deps/*-subbuild; without them the clone script does rm -rf +
+          # re-clone on a hit, so caching *-src alone saved nothing. The path is
+          # per-preset, so the key is too (actions/cache treats a different path as a
+          # different entry anyway). A Dependencies.cmake change makes a new key;
+          # restore-keys may seed from an older cache, after which FetchContent re-fetches
+          # the new SHA — so a stale cache is only slower, never wrong.
+          path: |
+            build/${{ matrix.preset }}/_deps/*-src
+            build/${{ matrix.preset }}/_deps/*-subbuild
+          key: deps-${{ matrix.preset }}-${{ hashFiles('cmake/Dependencies.cmake') }}
+          restore-keys: |
+            deps-${{ matrix.preset }}-
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      # ctest runs the suite. For the asan preset this is where the motion finite-input
+      # asserts are live (Debug build, no -DNDEBUG) and the MotionDeathTest cases execute.
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }} --output-on-failure
+
+  gitleaks:
+    name: gitleaks (secret scan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          fetch-depth: 0              # full history available for the scheduled --all scan
+          persist-credentials: false
+
+      # Install the SAME pinned, checksum-verified gitleaks the local pre-commit hook uses
+      # (scripts/setup-hooks.sh, ADR-0005). This replaces gitleaks-action@v2, which pulled
+      # an older default version (8.24.3) with no checksum step, needed GITHUB_TOKEN, and is
+      # license-gated for organizations. (H2 / M2 / M1-action / L4 from the PR #7 review.)
+      - name: Install gitleaks (pinned + checksum-verified)
+        run: |
+          set -euo pipefail
+          VER=8.30.1
+          SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+          TMP="$(mktemp -d)"
+          curl -fsSL -o "$TMP/gl.tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz"
+          echo "${SHA256}  $TMP/gl.tgz" | sha256sum -c -
+          sudo tar -xzf "$TMP/gl.tgz" -C /usr/local/bin gitleaks
+          rm -rf "$TMP"
+          gitleaks version
+
+      # schedule/workflow_dispatch: scan ALL history, including unreachable/other refs
+      #   (gitleaks git --log-opts=--all).
+      # push/pull_request: gitleaks git with no --log-opts scans everything reachable from
+      #   HEAD (not just the new commits) — a superset of the event range, which is fine.
+      - name: Scan
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Full-history scan: all refs (gitleaks git --log-opts=--all)"
+            gitleaks git --redact --no-banner --config .gitleaks.toml --log-opts="--all" .
+          else
+            echo "Scan all commits reachable from HEAD"
+            gitleaks git --redact --no-banner --config .gitleaks.toml .
+          fi

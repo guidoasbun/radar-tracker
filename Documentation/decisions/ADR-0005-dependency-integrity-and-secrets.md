@@ -52,8 +52,14 @@ protection. A review raised two valid points:
     returns 200 but leaves `secret_scanning_non_provider_patterns=disabled` (the
     available token scope / account tier cannot toggle it). Enable it in the web UI:
     Settings → Code security → Secret scanning → "Scan for non-provider patterns".
-  - ⏳ A gitleaks CI job (unbypassable, unlike the local hook) will be added with the
-    M1 CI workflow.
+  - ✅ A gitleaks CI job runs on every push and pull request (`.github/workflows/ci.yml`),
+    installing the **same** pinned, checksum-verified gitleaks 8.30.1 binary this ADR
+    specifies for the local hook (`sha256sum -c`), not a mutable action. Two notes:
+    (a) it is *unbypassable* because the four CI checks are now set as **required status
+    checks** on `main` (`strict: true`, `enforce_admins` on; see phase-ci design §2 / H1) —
+    a red PR cannot be merged, owner included; (b) on push/PR it scans all commits reachable
+    from HEAD, and a weekly `schedule` + `workflow_dispatch` run `gitleaks git
+    --log-opts=--all` to also cover history not reachable from HEAD (all refs).
 - Follow-ups:
   - Enable non-provider pattern scanning via the web UI (see above).
   - Consider switching to release-archive URLs + hash (`URL_HASH`) for faster, git-free

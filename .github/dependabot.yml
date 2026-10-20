@@ -1,0 +1,14 @@
+# Keep the SHA-pinned GitHub Actions updated. Pinning to full commit SHAs
+# (ADR-0005) is the security control; Dependabot opens PRs that bump the SHA and
+# refresh the trailing "# vN" comment, so pins stay current without hand-editing.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
+      - github-actions

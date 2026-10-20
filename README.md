@@ -71,7 +71,23 @@ it is not). Hook config lives in `.gitleaks.toml`.
   `git commit --no-verify` — and prefer adding an allowlist entry to `.gitleaks.toml`.
 - The hook is local and can be skipped, so it is a convenience, not the last line of
   defence. GitHub **push protection + secret scanning** are enabled on the repo, and a
-  **gitleaks CI job** (which cannot be bypassed) will be added with the M1 CI workflow.
+  **gitleaks CI job** (which cannot be bypassed) runs on every push and pull request — see
+  [Continuous integration](#continuous-integration) below.
+
+## Continuous integration
+
+Every push and pull request to `main` runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+on `ubuntu-24.04`:
+
+| Job | What it enforces |
+| --- | --- |
+| `gcc (ci preset)` | release + `-Werror` + clang-tidy build and full test suite (GCC) |
+| `clang (ci-clang preset)` | the same strict gate under Clang |
+| `asan (Clang, ASan/UBSan)` | sanitizer-clean **and** runs the test suite as a Debug build, so `assert`-based preconditions and death tests (compiled out of the `ci` presets by `-DNDEBUG`) actually execute |
+| `gitleaks (secret scan)` | server-side secret scan with the same pinned, checksum-verified gitleaks as the local hook (`.gitleaks.toml`) — scans all commits reachable from HEAD on push/PR and **all history** (all refs) on a weekly schedule; cannot be skipped with `--no-verify` |
+
+The build jobs run exactly the local presets (`cmake --preset … && cmake --build … &&
+ctest --preset …`), so CI and local developer runs cannot drift.
 
 ## License
 

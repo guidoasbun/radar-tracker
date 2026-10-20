@@ -52,7 +52,12 @@ sensor to generate data, so the M1 module order is:
 7. `metrics` (RMSE only) — raw vs track error
 8. `apps/radar_sim` — wire it together, run end-to-end, print RMSE
 9. `tools/plot.py` + README figure
-10. `.github/workflows/ci.yml` — build + test on push
+10. `.github/workflows/ci.yml` — build + test on push — ✅ **done, pulled forward** (after
+    `types`/`motion`; see `planning/phase-ci/`). Rationale: CI guards *future* commits, so it
+    is most valuable early; two PR reviews (PR #4 L5/N2) flagged that every result rested on
+    local runs and that the `motion` finite-input asserts ran in CI nowhere. The workflow runs
+    the GCC/Clang/asan matrix (the asan job exercises the asserts + death tests) plus an
+    unbypassable gitleaks job.
 
 ## Working principles (carried from the spec)
 
