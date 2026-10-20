@@ -1,0 +1,87 @@
+# CI — build + test matrix and an unbypassable secret scan on every push/PR to main.
+#
+# Build jobs run exactly the local presets (cmake --preset X && build && ctest) so CI
+# and local developer runs cannot drift. The asan job is the only place the finite-input
+# asserts and death tests execute, because the ci/ci-clang presets inherit -DNDEBUG from
+# release. See Documentation/planning/phase-ci/ and ADR-0002 / ADR-0004.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least privilege: jobs only read the repository.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref to save runner time.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc (ci preset)
+            preset: ci
+          - name: clang (ci-clang preset)
+            preset: ci-clang
+          - name: asan (Clang, ASan/UBSan)
+            preset: asan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          # ninja for all builds; clang + clang-tidy because every preset here either
+          # builds with Clang or (the GCC ci preset) runs clang-tidy via RADAR_CLANG_TIDY.
+          sudo apt-get install -y ninja-build clang clang-tidy
+          cmake --version
+          ninja --version
+
+      # Cache the FetchContent dependency sources (Eigen/GoogleTest/json/CLI11) so only
+      # the first run pays the download. Keyed on Dependencies.cmake: a pin change busts it.
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/${{ matrix.preset }}/_deps
+          key: deps-${{ matrix.preset }}-${{ hashFiles('cmake/Dependencies.cmake') }}
+          restore-keys: |
+            deps-${{ matrix.preset }}-
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      # ctest runs the suite. For the asan preset this is where the motion finite-input
+      # asserts are live (Debug build, no -DNDEBUG) and the MotionDeathTest cases execute.
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }} --output-on-failure
+
+  gitleaks:
+    name: gitleaks (secret scan)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history so the scan covers every commit, not just HEAD
+
+      # Server-side secret scan using the tracked .gitleaks.toml. Unlike the local
+      # pre-commit hook, this cannot be skipped with --no-verify, so it is the real control
+      # the README promises (lines 73-74).
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
