@@ -7,6 +7,10 @@
 # such third-party false positives with a *scoped ignorelist* rather than dropping the
 # implicit-conversion check wholesale — this file is that ignorelist.
 #
+# This file is registered as a CMAKE_CONFIGURE_DEPENDS in the top-level CMakeLists, so
+# editing it forces a re-configure and rebuild — a stale asan build cannot silently keep
+# a removed suppression or miss an added one.
+#
 # Format: https://clang.llvm.org/docs/SanitizerSpecialCaseList.html
 # Match Eigen source by path substring (src: uses the file name/path, wildcards allowed).
 

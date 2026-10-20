@@ -38,6 +38,27 @@
       planned for. Our code stays instrumented.
 
 ## T5 — Ship
+
+## PR #11 review follow-up (H1, M1–M3, Low)
+All mutation-verified (the cited bug now fails the matching test):
+- **H1 (gate fail-open)** — `gate_distance`/`update` used `det(S) > 0`, which accepts a 2×2
+  negative-definite S (e.g. `−I`) and returns a negative d² inside the gate for any
+  measurement. Replaced with a shared `spd_cholesky` helper (`Eigen::LLT` + symmetry check);
+  `d² = y·(S⁻¹y) ≥ 0`. `update` now reuses `innovation`/`innovation_covariance` (no duplicated
+  `y`/`S`) and the same helper. Tests: `S = −I`, asymmetric S, negative-definite-P `update`.
+  *Mutation*: reverting to det-based accept fails `GateDistanceRejectsNonPositiveDefiniteS`.
+- **M1 (convergence couldn't tell a filter from pass-through)** — `TrackRmseBeatsRawRmse` now
+  checks the spec gate: RMS(est−truth)/RMS(z−truth) ≤ 0.5 over the tail. *Mutation*: `est = z`
+  fails it (ratio 1.0).
+- **M2 (no hand check of predicted cov / update state)** — added `PredictCovarianceMatchesHand
+  Computed` (`F·Fᵀ`) and `UpdateStateMatchesHandComputed` (non-diagonal P → `x = (11, 19.5,
+  1.1, −1.05)`, exercises the velocity gain). *Mutations*: `Fᵀ·P·F` and half-gain each fail.
+- **M3** — `KalmanConfig::sigma_a` default `1.0 → 5.0` (spec).
+- **Low** — filter requires `σ_m > 0` (clear error vs a downstream singular-S); the sanitizer
+  ignorelist is now a `CMAKE_CONFIGURE_DEPENDS` so edits force a rebuild; `.clang-tidy` disables
+  the single `clang-analyzer-security.ArrayBound` check (false positive in Eigen's blocked GEMM
+  reached via `llt.solve`, with documented rationale).
+- Verified: `ci`/`ci-clang` 54/54, `asan` 56/56, clang-format clean; all four mutations fail.
 - [ ] Single clean commit, push, open PR (reference issue #6); CI gates.
 
 ## Exit criteria

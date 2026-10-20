@@ -105,6 +105,28 @@ TEST(Kalman, PredictGrowsCovarianceByProcessNoise) {
   EXPECT_GT(out.P(radar::kVy, radar::kVy), s.P(radar::kVy, radar::kVy));
 }
 
+TEST(Kalman, PredictCovarianceMatchesHandComputed) {
+  // P = I, dt = 0.5, sigma_a = 0 => P_pred = F P F^T = F F^T, worked out by hand:
+  //   [[1.25, 0,    0.5, 0  ],
+  //    [0,    1.25, 0,   0.5],
+  //    [0.5,  0,    1,   0  ],
+  //    [0,    0.5,  0,   1  ]]
+  // The transposed-covariance bug (F^T P F) gives a different matrix (1.25 in the
+  // velocity block, not the position block), so this pins the order of F and F^T.
+  const radar::KalmanConfig cfg{.dt = 0.5, .sigma_a = 0.0, .sigma_m = 50.0};
+  const radar::TrackState s = state_of(Eigen::Vector4d::Zero(), Eigen::Matrix4d::Identity());
+  const radar::TrackState out = radar::predict(s, cfg);
+
+  Eigen::Matrix4d expected;
+  // clang-format off
+  expected << 1.25, 0.0,  0.5, 0.0,
+              0.0,  1.25, 0.0, 0.5,
+              0.5,  0.0,  1.0, 0.0,
+              0.0,  0.5,  0.0, 1.0;
+  // clang-format on
+  EXPECT_TRUE(out.P.isApprox(expected));
+}
+
 // ---- Track initialization --------------------------------------------------
 
 TEST(Kalman, InitiateTrackExactStateAndCovariance) {
@@ -152,6 +174,18 @@ TEST(Kalman, GateDistanceKnownValues) {
   EXPECT_DOUBLE_EQ(radar::gate_distance(y, s), 6.25);
 }
 
+TEST(Kalman, GateDistanceRejectsNonPositiveDefiniteS) {
+  const Eigen::Vector2d y{1000.0, 1000.0};
+  // Negative-definite S = -I has det(+1) > 0 but is NOT positive-definite. The old
+  // det>0 check accepted it and returned a NEGATIVE d^2 that passes the gate for any
+  // measurement (fail-open). Cholesky rejects it.
+  EXPECT_THROW((void)radar::gate_distance(y, -Eigen::Matrix2d::Identity()), std::invalid_argument);
+  // Asymmetric S is also rejected (LLT only reads the lower triangle).
+  Eigen::Matrix2d asym;
+  asym << 10.0, 3.0, -3.0, 10.0;
+  EXPECT_THROW((void)radar::gate_distance(y, asym), std::invalid_argument);
+}
+
 // ---- Joseph update: fixed point, symmetry, PSD, trace drop -----------------
 
 TEST(Kalman, UpdateWithZeroInnovationLeavesMeanAndShrinksCovariance) {
@@ -190,29 +224,78 @@ TEST(Kalman, JosephMatchesTextbookFormOnBenignCase) {
   EXPECT_TRUE(post.P.isApprox(p_textbook, 1e-9));
 }
 
-// ---- Convergence smoke (AC-6): the filter actually tracks ------------------
+TEST(Kalman, UpdateStateMatchesHandComputed) {
+  // Non-diagonal P so the position-velocity covariance is nonzero and the VELOCITY
+  // gain is exercised (the diagonal-P Joseph test has zero velocity gain). Per axis:
+  //   pos var 400, vel var 100, pos-vel cov 40; sigma_m = 20 => R = 400 I, S = 800 I.
+  // Gains: K_pos = 400/800 = 0.5, K_vel = 40/800 = 0.05.
+  // x = (10, 20, 1, -1), z = (12, 19) => y = (2, -1):
+  //   px = 10 + 0.5*2   = 11;     py = 20 + 0.5*(-1)  = 19.5
+  //   vx = 1  + 0.05*2  = 1.1;    vy = -1 + 0.05*(-1) = -1.05
+  // The half-gain mutation (x = x + 0.5*K*y) would give (10.5, 19.75, 1.05, -1.025).
+  const radar::KalmanConfig cfg{.dt = 0.1, .sigma_a = 5.0, .sigma_m = 20.0};
+  Eigen::Matrix4d p = Eigen::Matrix4d::Zero();
+  p(radar::kPx, radar::kPx) = 400.0;
+  p(radar::kPy, radar::kPy) = 400.0;
+  p(radar::kVx, radar::kVx) = 100.0;
+  p(radar::kVy, radar::kVy) = 100.0;
+  p(radar::kPx, radar::kVx) = 40.0;
+  p(radar::kVx, radar::kPx) = 40.0;
+  p(radar::kPy, radar::kVy) = 40.0;
+  p(radar::kVy, radar::kPy) = 40.0;
+  const radar::TrackState prior = state_of(Eigen::Vector4d{10.0, 20.0, 1.0, -1.0}, p);
 
-TEST(Kalman, ConvergesOnStraightLineTruth) {
-  const radar::KalmanConfig cfg{.dt = 0.1, .sigma_a = 1.0, .sigma_m = 50.0};
+  const radar::TrackState post = radar::update(prior, meas(12.0, 19.0), cfg);
+  EXPECT_NEAR(post.x(radar::kPx), 11.0, 1e-9);
+  EXPECT_NEAR(post.x(radar::kPy), 19.5, 1e-9);
+  EXPECT_NEAR(post.x(radar::kVx), 1.1, 1e-9);
+  EXPECT_NEAR(post.x(radar::kVy), -1.05, 1e-9);
+}
+
+TEST(Kalman, UpdateRejectsNegativeDefinitePrior) {
+  // A negative-definite P makes S = Ppos + R negative-definite too; Cholesky rejects
+  // it instead of producing a plausible-looking (but corrupt) posterior.
+  const radar::KalmanConfig cfg{.dt = 0.1, .sigma_a = 5.0, .sigma_m = 0.0001};
+  const Eigen::Matrix4d p = -1.0e4 * Eigen::Matrix4d::Identity();
+  const radar::TrackState prior = state_of(Eigen::Vector4d::Zero(), p);
+  EXPECT_THROW((void)radar::update(prior, meas(100.0, 100.0), cfg), std::invalid_argument);
+}
+
+// ---- Convergence: filter RMSE <= 0.5 * raw RMSE over the tail (spec M1 gate) ----
+
+TEST(Kalman, TrackRmseBeatsRawRmse) {
+  // The spec's M1 acceptance gate: confirmed-track position RMSE <= 0.5 x raw
+  // measurement RMSE on a straight-line target. Testing the RATIO (not just a loose
+  // absolute bound) is what distinguishes a real filter from a pass-through: setting
+  // the estimate to the raw measurement gives ratio 1.0 and fails this test, whereas a
+  // bound like "< 100 m" would pass the pass-through (raw RMS is only ~71 m).
+  const radar::KalmanConfig cfg{.dt = 0.1, .sigma_a = 5.0, .sigma_m = 50.0};
   const radar::SensorConfig scfg{.sigma_m = 50.0};
   std::mt19937_64 rng{42};  // NOLINT(cert-msc32-c,cert-msc51-cpp): fixed test seed
 
-  // Truth: CV target crossing the field.
-  Eigen::Vector4d truth{0.0, 0.0, 200.0, -100.0};
+  Eigen::Vector4d truth{0.0, 0.0, 200.0, -100.0};  // CV target crossing the field
   const radar::TrueTarget t0{.id = 0, .position = truth.head<2>()};
   radar::TrackState est = radar::initiate_track(radar::sense({t0}, scfg, rng)[0].measurement, cfg);
 
-  double last_err = 0.0;
-  for (int k = 0; k < 60; ++k) {
+  constexpr int kSteps = 100;
+  constexpr int kTail = 30;  // measure after the filter has converged
+  double sum_track_sq = 0.0;
+  double sum_raw_sq = 0.0;
+  int n = 0;
+  for (int k = 0; k < kSteps; ++k) {
     truth = radar::propagate_cv(truth, cfg.dt);
     const radar::TrueTarget t{.id = 0, .position = truth.head<2>()};
     const radar::Measurement z = radar::sense({t}, scfg, rng)[0].measurement;
     est = radar::update(radar::predict(est, cfg), z, cfg);
-    last_err = (est.x.head<2>() - truth.head<2>()).norm();
+    if (k >= kSteps - kTail) {
+      sum_track_sq += (est.x.head<2>() - truth.head<2>()).squaredNorm();
+      sum_raw_sq += (z.position - truth.head<2>()).squaredNorm();
+      ++n;
+    }
   }
-  // After convergence the estimate should sit well inside the raw noise (~71 m RMS),
-  // comfortably under a loose smoke bound. (Phase K does the rigorous statistics.)
-  EXPECT_LT(last_err, 100.0);
+  const double track_rmse = std::sqrt(sum_track_sq / n);
+  const double raw_rmse = std::sqrt(sum_raw_sq / n);
+  EXPECT_LT(track_rmse, 0.5 * raw_rmse);  // the spec gate
 }
 
 // ---- Validation throws (every build) ---------------------------------------

@@ -67,30 +67,54 @@ exactly.
 ### AC-4 — Innovation, S, and gate distance
 - `innovation(state, z) == z − H·x̂` (exact).
 - `innovation_covariance == H·P·Hᵀ + R` (the top-left 2×2 position block of P plus R).
-- `gate_distance(y, S) == yᵀ·S⁻¹·y`: zero for `y == 0`; for `S = σ²·I`, `d² = ‖y‖²/σ²`
-  (hand-checkable); non-negative and finite for any PSD `S`.
+- `gate_distance(y, S)`: zero for `y == 0`; for `S = σ²·I`, `d² = ‖y‖²/σ²` (hand-checkable);
+  non-negative by construction. S's positive-definiteness is verified by a **Cholesky
+  (`Eigen::LLT`)** factorization, **not** `det(S) > 0` — a 2×2 negative-definite S (e.g. `−I`)
+  also has positive determinant, which the old check accepted and returned a *negative* d²
+  that passes the gate for any measurement (fail-open). `gate_distance` throws on a non-finite
+  `y`, an asymmetric S, or a non-positive-definite S (tested with `S = −I` and an asymmetric S).
 
 ### AC-5 — Joseph update is correct and numerically sound
+- `update` reuses `innovation` and `innovation_covariance` (one definition of `y` and `S`,
+  shared with the gate) and the same Cholesky SPD guard — so a negative-definite prior `P`
+  (hence negative-definite S) is rejected rather than producing a plausible-looking but corrupt
+  posterior (tested).
 - For a measurement equal to the prediction (`y = 0`), the state is unchanged and `P` only
   shrinks (no spurious motion).
 - The posterior `P` is **symmetric** (after `symmetrize`) and **positive semi-definite**
-  (eigenvalues ≥ 0), and no larger than the prior in the position block (an update cannot
-  increase certainty-weighted uncertainty).
-- A single update with a finite-`P` prior and a real measurement reduces the position-block
-  trace of `P` versus the prior.
-- Cross-check: on a well-conditioned case the Joseph result matches the textbook
-  `(I − K·H)·P` form to tolerance (they differ only in rounding, which is the point of Joseph).
+  (eigenvalues ≥ 0); the position-block trace decreases versus the prior.
+- **Hand-computed update state (M2):** with a non-diagonal prior `P` (position var 400, velocity
+  var 100, position–velocity covariance 40 per axis), `σ_m = 20` (so `S = 800·I`), `x = (10, 20,
+  1, −1)`, `z = (12, 19)`, the posterior is exactly `x = (11, 19.5, 1.1, −1.05)` (gains 0.5 /
+  0.05). This exercises the **velocity** gain (the diagonal-P Joseph cross-check leaves it zero)
+  and catches a wrong gain scale (e.g. a half-gain bug).
+- Cross-check: on a well-conditioned diagonal case the Joseph result matches the textbook
+  `(I − K·H)·P` form to tolerance (they differ only in rounding, the point of Joseph).
 
-### AC-6 — Convergence sanity (filter actually tracks)
+### AC-6 — Convergence: track RMSE ≤ 0.5 × raw RMSE (the spec's M1 gate)
 Feeding a straight-line CV truth through a Gaussian sensor (reusing `motion` + `sensor`) and
-running predict/update each scan, the estimate's position error settles below the raw
-measurement noise within a handful of scans (a smoke-level check; the rigorous NEES/NIS battery
-is Phase K).
+running predict/update each scan, the **ratio** RMS(`est − truth`) / RMS(`z − truth`) over the
+converged tail is `≤ 0.5` — the spec's actual M1 acceptance gate. Testing the ratio (not a loose
+absolute bound) is what distinguishes a real filter from a pass-through: setting the estimate to
+the raw measurement gives ratio 1.0 and fails. (The rigorous NEES/NIS battery is still Phase K.)
 
 ### AC-7 — Invalid inputs rejected
-Non-finite or non-positive `dt`, non-finite/negative `sigma_a` or `sigma_m`, and non-finite
-measurement/state inputs are rejected (throw `std::invalid_argument`), consistent with the
-`sensor`/`motion` precedent — a filter fed NaN silently poisons every downstream track.
+Non-finite or non-positive `dt`, non-finite/negative `sigma_a`, non-finite/**non-positive**
+`sigma_m` (the filter requires `σ_m > 0`, unlike the sensor, so a zero does not surface later as
+a confusing singular-S error), and non-finite measurement/state inputs are rejected (throw
+`std::invalid_argument`), consistent with the `sensor`/`motion` precedent — a filter fed NaN
+silently poisons every downstream track.
+
+### AC-2b — Predicted covariance, hand-computed (M2)
+With `P = I`, `dt = 0.5`, `σ_a = 0`, the predicted covariance is exactly
+`F·Fᵀ = [[1.25,0,0.5,0],[0,1.25,0,0.5],[0.5,0,1,0],[0,0.5,0,1]]`, checked against a literal
+matrix. This pins the order `F·P·Fᵀ` (a transposed `Fᵀ·P·F` bug puts the `1.25` in the velocity
+block instead) — the covariance analogue of the issue-#6 hand-computed state check.
+
+### AC-config — Default `σ_a` is the spec value
+`KalmanConfig::sigma_a` defaults to **5.0 m/s²** (the spec parameter table and example
+scenario), not a placeholder — an under-value would make Phase K's NEES/NIS judge an
+overconfident filter. It remains the one genuinely tuned knob, refined in M2.
 
 ### AC-8 — Tooling + tested
 - `clang-format --dry-run --Werror` clean; `ci`/`ci-clang` 0 warnings in our code.

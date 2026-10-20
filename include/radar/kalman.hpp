@@ -8,12 +8,12 @@
 namespace radar {
 
 /// Kalman filter tuning. `dt` and `sigma_m` come from the scenario; `sigma_a` is the
-/// one genuinely *tuned* parameter (set in M2 against the NIS target) — the default
-/// here is a placeholder. `sigma_m` must match the sensor's.
+/// one genuinely *tuned* parameter — the default is the spec's 5 m/s² and is refined
+/// in M2 against the NIS target. `sigma_m` must be positive and match the sensor's.
 struct KalmanConfig {
   double dt{0.1};        ///< scan interval (s)
-  double sigma_a{1.0};   ///< process-noise acceleration std-dev (m/s^2)
-  double sigma_m{50.0};  ///< measurement noise std-dev per axis (m)
+  double sigma_a{5.0};   ///< process-noise acceleration std-dev (m/s^2); spec default
+  double sigma_m{50.0};  ///< measurement noise std-dev per axis (m), > 0; matches the sensor
 };
 
 /// Chi-squared gate threshold: 2 DOF, 99% — a measurement is a gating candidate for a
@@ -59,8 +59,11 @@ using MeasurementMatrix = Eigen::Matrix<double, 2, 4>;
                                                     const KalmanConfig& cfg);
 
 /// Gated Mahalanobis distance d^2 = y^T * S^-1 * y. A measurement is inside a track's
-/// gate when d^2 <= kGate99. Throws std::invalid_argument if S is not finite or not
-/// positive-definite (a degenerate S would otherwise yield a NaN/Inf distance).
+/// gate when d^2 <= kGate99. S must be symmetric positive-definite: this is checked
+/// with a Cholesky (LLT) factorization, not det(S) > 0 — a 2x2 negative-definite S
+/// also has positive determinant, which would make d^2 negative and pass the gate for
+/// any measurement (fail-open). Throws std::invalid_argument if y is non-finite or S is
+/// not symmetric positive-definite. The result is >= 0 by construction.
 [[nodiscard]] double gate_distance(const Eigen::Vector2d& y, const Eigen::Matrix2d& S);
 
 /// Measurement update in Joseph form:

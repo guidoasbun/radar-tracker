@@ -125,11 +125,13 @@ number after it.
 | --- | --- |
 | Common-mode F bug (shared truth/filter F) | hand-computed predict test, no `cv_transition_matrix` call (issue #6 / ADR-0006). |
 | Non-PSD P from the textbook update under rounding | Joseph form + `symmetrize`; test asserts eigenvalues ≥ 0. |
-| Degenerate/ill-conditioned S → NaN d² or gain | validate S finite + positive determinant; throw on degeneracy. |
-| NaN input silently poisons tracks and Phase K | throw `std::invalid_argument` on non-finite/invalid config/inputs (AC-7). |
-| `σ_a` left untuned makes NIS fail later | default is a placeholder; real tuning is M2 against the NIS target, flagged in config docs. |
+| Gate fails **open** on a negative-definite S (`det(S) > 0` wrongly accepted `−I`, giving a negative d²) | SPD verified by **Cholesky** (`Eigen::LLT`) + symmetry check, shared by `gate_distance` and `update`; `d² = y·(S⁻¹y) ≥ 0`. Tested with `S = −I`, asymmetric S, and a negative-definite-P `update` (PR #11 H1). |
+| NaN input silently poisons tracks and Phase K | throw `std::invalid_argument` on non-finite/invalid config/inputs (AC-7); the filter also requires `σ_m > 0`. |
+| `σ_a` default too small → Phase K judges an overconfident filter | default is the spec's **5.0 m/s²**, not a placeholder (PR #11 M3); real tuning is M2 against the NIS target. |
 | `Q`/variance vs std-dev confusion | `process_noise` takes `σ_a` (std-dev) and squares it; literal-matrix test catches a missing/extra square. |
-| UBSan `implicit-conversion` false positive inside Eigen's SSE packet math (`pabs`), hit by the `SelfAdjointEigenSolver` PSD check | Added `cmake/sanitizer-ignorelist.txt` scoped to `*/eigen3-src/*` / `*/Eigen/*` and wired into the `asan` preset — exactly the third-party-scoped ignorelist Phase 0's risk table committed to, not a wholesale drop of the check. Our code is still fully instrumented. |
+| Transposed covariance predict (`Fᵀ·P·F`) or wrong gain scale | hand-computed predicted-covariance (`F·Fᵀ`) and update-state (`x = (11, 19.5, 1.1, −1.05)`) tests — mutation-verified to fail on those bugs (PR #11 M2). |
+| UBSan `implicit-conversion` false positive inside Eigen's SSE `pabs`, hit by the `SelfAdjointEigenSolver` PSD check | `cmake/sanitizer-ignorelist.txt` scoped to Eigen paths, wired into `asan` and registered as a `CMAKE_CONFIGURE_DEPENDS` so edits force a rebuild — the third-party-scoped ignorelist Phase 0 planned for; our code stays instrumented. |
+| clang-analyzer `security.ArrayBound` false positive inside Eigen's blocked GEMM, reached via the gain's `llt.solve()` | analyzer diagnostics ignore `HeaderFilterRegex`, so it leaked from the SYSTEM Eigen header as our error; disabled that **one** analyzer check in `.clang-tidy` with a documented rationale (the rest of `clang-analyzer-*` stays on). |
 
 ## 6. What this unblocks
 

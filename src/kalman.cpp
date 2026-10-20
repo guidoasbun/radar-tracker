@@ -28,6 +28,17 @@ void require_sigma(double sigma, const char* what) {
   }
 }
 
+// sigma_m must be strictly positive inside the FILTER: R = diag(sigma_m^2) and the
+// initial position variance are sigma_m^2, so sigma_m == 0 makes S singular and the
+// first update throws a confusing "S must be positive-definite". Rejecting it here
+// gives a clear config error. (The sensor may still accept sigma_m == 0 for a
+// noise-free truth measurement; that is a different concern.)
+void require_sigma_positive(double sigma, const char* what) {
+  if (!std::isfinite(sigma) || sigma <= 0.0) {
+    throw std::invalid_argument(what);
+  }
+}
+
 void require_finite_state(const TrackState& s) {
   if (!s.x.allFinite() || !s.P.allFinite()) {
     throw std::invalid_argument("kalman: state (x, P) must be finite");
@@ -38,6 +49,23 @@ void require_finite_measurement(const Measurement& z) {
   if (!z.position.allFinite()) {
     throw std::invalid_argument("kalman: measurement position must be finite");
   }
+}
+
+// Cholesky factor of S, or throw. LLT succeeds ONLY for a symmetric positive-definite
+// matrix, so this is the correct SPD test — det(S) > 0 is NOT: a 2x2 negative-definite
+// matrix (e.g. -I) also has positive determinant, which would let gate_distance return
+// a negative d^2 that passes the gate for ANY measurement (fail-open), and would let
+// update accept a corrupt negative-definite P. We also require symmetry explicitly, as
+// LLT only reads the lower triangle.
+Eigen::LLT<Eigen::Matrix2d> spd_cholesky(const Eigen::Matrix2d& s) {
+  if (!s.allFinite() || !s.isApprox(s.transpose())) {
+    throw std::invalid_argument("kalman: S must be finite and symmetric");
+  }
+  Eigen::LLT<Eigen::Matrix2d> llt(s);
+  if (llt.info() != Eigen::Success) {
+    throw std::invalid_argument("kalman: S must be symmetric positive-definite");
+  }
+  return llt;
 }
 
 }  // namespace
@@ -76,7 +104,7 @@ MeasurementMatrix measurement_matrix() noexcept {
 }
 
 Eigen::Matrix2d measurement_noise(double sigma_m) {
-  require_sigma(sigma_m, "kalman: sigma_m must be finite and non-negative");
+  require_sigma_positive(sigma_m, "kalman: sigma_m must be finite and positive");
   Eigen::Matrix2d r = Eigen::Matrix2d::Zero();
   r(0, 0) = sigma_m * sigma_m;
   r(1, 1) = sigma_m * sigma_m;
@@ -100,7 +128,7 @@ TrackState predict(const TrackState& state, const KalmanConfig& cfg) {
 }
 
 TrackState initiate_track(const Measurement& z, const KalmanConfig& cfg) {
-  require_sigma(cfg.sigma_m, "kalman: sigma_m must be finite and non-negative");
+  require_sigma_positive(cfg.sigma_m, "kalman: sigma_m must be finite and positive");
   require_finite_measurement(z);
 
   TrackState out;
@@ -130,33 +158,36 @@ Eigen::Matrix2d innovation_covariance(const TrackState& state, const KalmanConfi
 }
 
 double gate_distance(const Eigen::Vector2d& y, const Eigen::Matrix2d& S) {
-  if (!y.allFinite() || !S.allFinite()) {
-    throw std::invalid_argument("kalman: innovation and S must be finite");
+  if (!y.allFinite()) {
+    throw std::invalid_argument("kalman: innovation must be finite");
   }
-  // S must be positive-definite for a meaningful Mahalanobis distance; a degenerate S
-  // would yield a NaN/Inf d^2 that silently passes or fails the gate.
-  const double det = S.determinant();
-  if (!(det > 0.0)) {
-    throw std::invalid_argument("kalman: S must be positive-definite");
-  }
-  return (y.transpose() * S.inverse() * y).value();
+  // Cholesky both validates S is symmetric positive-definite and gives a numerically
+  // sound solve; d^2 = y^T S^-1 y = y . (S^-1 y) is >= 0 by construction, so the gate
+  // cannot be fooled into accepting an arbitrary measurement by a negative distance
+  // (det(S) > 0 does NOT prove PD: a 2x2 negative-definite S also has det > 0).
+  const Eigen::LLT<Eigen::Matrix2d> llt = spd_cholesky(S);
+  return y.dot(llt.solve(y));
 }
 
 TrackState update(const TrackState& state, const Measurement& z, const KalmanConfig& cfg) {
-  require_sigma(cfg.sigma_m, "kalman: sigma_m must be finite and non-negative");
+  require_sigma_positive(cfg.sigma_m, "kalman: sigma_m must be finite and positive");
   require_finite_state(state);
   require_finite_measurement(z);
 
+  // Reuse the innovation and S primitives rather than re-deriving them here, so the
+  // formulas live in one place and the SPD guard applies identically to both the gate
+  // and the update.
   const MeasurementMatrix h = measurement_matrix();
   const Eigen::Matrix2d r = measurement_noise(cfg.sigma_m);
-  const Eigen::Vector2d y = z.position - state.x.head<2>();
-  const Eigen::Matrix2d s = state.P.topLeftCorner<2, 2>() + r;
+  const Eigen::Vector2d y = innovation(state, z);
+  const Eigen::Matrix2d s = innovation_covariance(state, cfg);
 
-  const double det = s.determinant();
-  if (!(det > 0.0)) {
-    throw std::invalid_argument("kalman: S must be positive-definite");
-  }
-  const Eigen::Matrix<double, 4, 2> k = state.P * h.transpose() * s.inverse();
+  // Cholesky validates S is SPD and backs the gain solve: K = P H^T S^-1 is the
+  // solution X of S^T X^T = (P H^T)^T, i.e. K^T = S^-1 (H P). With S symmetric,
+  // K = (S^-1 (H P))^T = ((H P)^T S^-1). We compute it via the factor's solve.
+  const Eigen::LLT<Eigen::Matrix2d> llt = spd_cholesky(s);
+  const Eigen::Matrix<double, 2, 4> hp = h * state.P;               // H*P (2x4)
+  const Eigen::Matrix<double, 4, 2> k = llt.solve(hp).transpose();  // P H^T S^-1 (4x2)
 
   TrackState out;
   out.x = state.x + k * y;
