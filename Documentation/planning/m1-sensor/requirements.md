@@ -101,10 +101,12 @@ features, recorded here so they are not forgotten:
 1. **"P_D = 0 yields no detections"** — needs the Bernoulli detection trial (`P_D < 1`), M2.
 2. **"λ = 0 yields no clutter" (and λ > 0 yields ~λ clutter per scan)** — needs the Poisson
    clutter generator, M2.
-3. **"measurement order is shuffled"** — the M1 sensor *does* shuffle (M3 from the PR review),
-   but the spec's intent (clutter and detections interleaved, order non-informative) is only
-   fully exercised once clutter exists (M2). M1 covers the detection-only shuffle via the
-   look-up-by-origin tests.
+3. **"measurement order is shuffled"** — the M1 sensor *does* shuffle (M3 from the PR review)
+   and `test_sensor`'s `OrderIsShuffled` checks it directly (two same-point targets over 1000
+   trials; the first element's origin is ~50/50, vs 1000/1000 if the shuffle were removed —
+   deleting the shuffle fails this test). The spec's *full* intent (clutter and detections
+   interleaved) is only exercised once clutter exists (M2).
 
 What M1 *does* cover from the contract: the Gaussian noise statistics (mean/std/RMSE),
-independence of axes (covariance), reproducibility, and input validation.
+independence of axes (covariance), that the output order is shuffled, reproducibility, and
+input validation (including that a failed call draws no randomness).

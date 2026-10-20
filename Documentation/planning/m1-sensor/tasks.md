@@ -56,6 +56,23 @@ Addressed the security-first review on PR #10:
   "Deviations from the spec" section for the deferred *tests*. **L4** — `<cstdint>`, extra
   non-finite/inf throw cases, tasks ticked.
 
+## PR #10 follow-up review (R1, R2, nit)
+- **R1** — the shuffle was untested (deleting it left all tests green). Added
+  `TEST(Sensor, OrderIsShuffled)`: two same-point targets, 1000 trials, first element's origin
+  is ~50/50; unshuffled it would be 1000/1000. **Mutation-verified**: deleting the
+  `std::shuffle` now fails this test. Fixed the requirements wording (it had claimed the
+  by-origin lookups covered the shuffle — they don't).
+- **R2** — a throw used to advance `rng` (target checks ran inside the draw loop, so target
+  0's noise was drawn before an invalid target 1 threw; a catch-and-retry caller would land on
+  a different stream). `sense` now validates **all** targets in a pre-pass before any draw.
+  Added `TEST(Sensor, FailedCallLeavesRngUnchanged)` (after a throw, `rng == fresh seeded`).
+  **Mutation-verified**: moving a target check back into the draw loop fails this test. Header
+  documents the no-RNG-on-throw guarantee.
+- **Nit** — fixed the `sensor.cpp` comment ("output is a pure function of `rng`'s state because
+  the distribution is per-call"), consistent with the L2 pair-caching note.
+- Verified: `ci`/`ci-clang` 36/36 (12 Sensor tests), `asan` 38/38, clang-format clean; both
+  mutations fail as intended.
+
 ## Exit criteria
 All ACs in `requirements.md` demonstrated by T4; `sensor.{hpp,cpp}` + `test_sensor.cpp`
 committed. Deferred M2 sensor steps recorded. Next module: `kalman` (predict, Joseph update,

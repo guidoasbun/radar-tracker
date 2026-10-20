@@ -165,6 +165,44 @@ TEST(Sensor, NoiseMatchesGaussianStatistics) {
   EXPECT_NEAR(sum_xy / kN, 0.0, 0.02 * kSigma * kSigma);
 }
 
+// ---- The output order is actually shuffled (M3 / R1) -----------------------
+
+TEST(Sensor, OrderIsShuffled) {
+  // Two targets at the same point: only the shuffle decides which comes first, so
+  // the first element's origin is a fair coin. Without the std::shuffle in sense(),
+  // output order would follow input order and origin 0 would be first every time
+  // (1000/1000) — this test is what makes deleting the shuffle fail.
+  const std::vector<radar::TrueTarget> targets{target(0, 0.0, 0.0), target(1, 0.0, 0.0)};
+  const radar::SensorConfig cfg{.sigma_m = 50.0};
+  std::mt19937_64 rng = seeded(kSeed);
+
+  constexpr int kTrials = 1000;
+  int first_is_0 = 0;
+  for (int i = 0; i < kTrials; ++i) {
+    first_is_0 += radar::sense(targets, cfg, rng)[0].origin == 0 ? 1 : 0;
+  }
+  // Fair shuffle: ~500 (SE ~ 16). Unshuffled would be exactly 1000.
+  EXPECT_GT(first_is_0, 400);
+  EXPECT_LT(first_is_0, 600);
+}
+
+// ---- A failed call draws no randomness (R2) --------------------------------
+
+TEST(Sensor, FailedCallLeavesRngUnchanged) {
+  // A valid target followed by an invalid one: validation must happen before any
+  // draw, so the throw leaves rng exactly as a freshly-seeded generator. If a
+  // target were validated inside the draw loop, target 0's noise would already have
+  // advanced rng before the throw, and this comparison would fail.
+  const std::vector<radar::TrueTarget> targets{target(0, 1.0, 2.0), target(-1, 3.0, 4.0)};
+  const radar::SensorConfig cfg{.sigma_m = 50.0};
+  std::mt19937_64 rng = seeded(kSeed);
+
+  EXPECT_THROW((void)radar::sense(targets, cfg, rng), std::invalid_argument);
+
+  const std::mt19937_64 fresh = seeded(kSeed);
+  EXPECT_TRUE(rng == fresh);  // engine operator== compares internal state
+}
+
 // ---- Input validation throws (runs in EVERY build, not just asserts) --------
 
 TEST(Sensor, NegativeSigmaThrows) {

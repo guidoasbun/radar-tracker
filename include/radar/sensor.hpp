@@ -45,8 +45,10 @@ struct TrueTarget {
 /// finite or is negative, or if any target has `id < 0` (would collide with the
 /// clutter sentinel −1) or a non-finite position. A runtime check, not an assert,
 /// because a bad `sigma_m` in a release build otherwise fails *open* to a silent
-/// noise-free sensor. `io` should also reject these at the scenario boundary
-/// (issue #5). `sense` runs once per scan, so the check is not on a hot path.
+/// noise-free sensor. All inputs are validated **before any noise is drawn**, so a
+/// throw leaves `rng` untouched — a caller that catches and retries stays on the
+/// same random stream ("same seed, same output"). `io` should also reject these at
+/// the scenario boundary (issue #5). `sense` runs once per scan, not a hot path.
 [[nodiscard]] std::vector<LabeledMeasurement> sense(const std::vector<TrueTarget>& targets,
                                                     const SensorConfig& cfg, std::mt19937_64& rng);
 
