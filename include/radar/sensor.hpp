@@ -26,35 +26,40 @@ struct TrueTarget {
 
 /// Noise-only sensor (M1 slice): emit exactly one LabeledMeasurement per target,
 /// z = p + n with n ~ N(0, sigma_m^2 I) (independent axes), origin = target id.
-/// P_D = 1 (every target detected), no clutter, no shuffle.
+/// P_D = 1 (every target detected), no clutter. The returned list is **shuffled**
+/// so its order carries no information about origin (the `Scan` contract); the
+/// hidden origin travels on each LabeledMeasurement, never on list position.
 ///
 /// Randomness is caller-owned and explicit: `rng` is the single scenario
 /// std::mt19937_64 (seeded from the scenario, default 42), passed by reference and
 /// threaded through the whole run so results reproduce exactly. The sensor holds
-/// no RNG state of its own.
+/// no RNG state of its own. (A 0/1-element shuffle draws nothing from `rng`, so
+/// single-target scenarios reproduce bit-for-bit.)
 ///
 /// Returns LabeledMeasurement because the sensor is the one place that knows a
 /// detection's origin; the simulator keeps these for truth/scoring and hands the
 /// tracker only `labeled.measurement` (a plain Measurement, no origin — the
 /// type-system isolation enforced in types.hpp).
 ///
-/// Preconditions (asserted in debug/ASan builds): every target position is finite
-/// and `cfg.sigma_m` is finite and >= 0. `io` validates scenario-sourced values at
-/// the boundary.
+/// Validates its inputs and throws `std::invalid_argument` if `cfg.sigma_m` is not
+/// finite or is negative, or if any target has `id < 0` (would collide with the
+/// clutter sentinel −1) or a non-finite position. A runtime check, not an assert,
+/// because a bad `sigma_m` in a release build otherwise fails *open* to a silent
+/// noise-free sensor. `io` should also reject these at the scenario boundary
+/// (issue #5). `sense` runs once per scan, so the check is not on a hot path.
 [[nodiscard]] std::vector<LabeledMeasurement> sense(const std::vector<TrueTarget>& targets,
                                                     const SensorConfig& cfg, std::mt19937_64& rng);
 
 // ---------------------------------------------------------------------------
 // DEFERRED (M2): the full per-scan sensor model.
 //
-// M1 implements only the Gaussian-noise detection of in-view targets with P_D = 1
-// (and the hidden origin tag). The remaining spec steps land in M2, alongside the
-// multi-target / clutter scenarios that exercise them:
+// M1 implements Gaussian-noise detection of in-view targets with P_D = 1, the
+// hidden origin tag, and the order shuffle. The remaining spec steps land in M2,
+// alongside the multi-target / clutter scenarios that exercise them:
 //   * P_D < 1  — per target, a Bernoulli(P_D) trial; emit only on success.
 //   * clutter  — draw Poisson(lambda) false alarms, placed uniformly in the
-//                surveillance square (+/- L on each axis).
-//   * shuffle  — randomize the per-scan measurement order so it carries no origin
-//                information (clutter and detections interleaved).
+//                surveillance square (+/- L on each axis), interleaved with the
+//                detections before the shuffle.
 //   * culling  — targets outside the surveillance square produce no detection.
 // Defaults for those knobs: P_D = 0.9, lambda = 2, L = 20000 m. They will extend
 // SensorConfig; the `sense` signature (targets, cfg, rng&) is forward-compatible.

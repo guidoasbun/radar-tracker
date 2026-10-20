@@ -52,10 +52,12 @@ detection is emitted), consistent with the deviation recorded in the `motion` re
 For a target at true position `p`, a produced measurement `z` satisfies `z = p + n` with
 `n` drawn from `N(0, σ_m²)` per axis, axes independent. Verified statistically (AC-5).
 
-### AC-2 — One labelled measurement per target, origin preserved
+### AC-2 — One labelled measurement per target, origin preserved, order shuffled
 With `P_D = 1` and N in-view targets, the function returns exactly N `LabeledMeasurement`s,
-each `origin` equal to its target's id, and the order corresponds to the input targets (no
-shuffle yet). Extracting `.measurement` yields a plain `Measurement` with only a position.
+one per target with `origin` equal to its target's id. The list is **shuffled**, so its order
+carries no origin information; tests therefore look a measurement up **by origin**, never by
+index. Extracting `.measurement` yields a plain `Measurement` with only a position. (A 0/1-
+element shuffle draws nothing from `rng`, so single-target runs reproduce bit-for-bit.)
 
 ### AC-3 — Reproducible, caller-owned RNG
 Given the same generator state (same seed), the function produces **bit-for-bit identical**
@@ -71,15 +73,38 @@ Over a large sample (≥ 100 000 draws for a fixed target, fixed seed):
 - empirical mean of `z − p` is ≈ 0 on each axis (within tolerance);
 - sample standard deviation per axis ≈ `σ_m` (within tolerance);
 - raw measurement error RMS `‖z − p‖` ≈ `σ_m·√2` (≈ 70.7 m at σ_m = 50), matching the spec's
-  "about 71 m" raw RMSE.
+  "about 71 m" raw RMSE;
+- the x/y **covariance** `Cov(e_x, e_y)` ≈ 0 — the check that actually tests AC-1's
+  "independent axes". A correlated-noise bug (e.g. `ny = nx`) leaves mean/std/RMSE unchanged but
+  drives this toward `σ²`, so without it independence is untested. Verified by a mutation.
 The test uses a fixed seed so it is deterministic in CI (no flakiness), with tolerances loose
-enough for seed stability but tight enough to catch a wrong σ or a mean offset.
+enough for seed stability but tight enough to catch a wrong σ, a mean offset, or correlation.
 
-### AC-6 — Finite inputs
-True positions and `σ_m` must be finite and `σ_m ≥ 0`; asserted in debug/ASan builds (the
-`types`/`motion` precedent). `io` validates scenario-sourced values at the boundary.
+### AC-6 — Invalid inputs are rejected at runtime (not just asserted)
+`sense` **throws `std::invalid_argument`** if `σ_m` is non-finite or negative, or if any target
+has `id < 0` (would collide with the clutter sentinel −1) or a non-finite position. A runtime
+throw, not an `assert`, because a bad `σ_m` in a release build otherwise fails *open* to a
+silent noise-free sensor; the `EXPECT_THROW` tests therefore run in **every** build, not only
+where asserts are live. `io` also validates scenario-sourced values at the boundary (issue #5).
 
 ### AC-7 — Tooling + tested
 - `clang-format --dry-run --Werror` clean; `ci`/`ci-clang` build 0 warnings in our code.
 - `tests/test_sensor.cpp` registered via `radar_add_test`, green under `release`, `ci`,
   `ci-clang`, and `asan`.
+
+## Deviations from the spec (recorded for the M2 implementer)
+
+The spec's `test_sensor.cpp` contract lists three checks this M1 slice does **not** implement,
+because the features they test are deferred to M2 (above). The *tests* are deferred with the
+features, recorded here so they are not forgotten:
+
+1. **"P_D = 0 yields no detections"** — needs the Bernoulli detection trial (`P_D < 1`), M2.
+2. **"λ = 0 yields no clutter" (and λ > 0 yields ~λ clutter per scan)** — needs the Poisson
+   clutter generator, M2.
+3. **"measurement order is shuffled"** — the M1 sensor *does* shuffle (M3 from the PR review),
+   but the spec's intent (clutter and detections interleaved, order non-informative) is only
+   fully exercised once clutter exists (M2). M1 covers the detection-only shuffle via the
+   look-up-by-origin tests.
+
+What M1 *does* cover from the contract: the Gaussian noise statistics (mean/std/RMSE),
+independence of axes (covariance), reproducibility, and input validation.
