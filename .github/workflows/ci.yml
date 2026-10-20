@@ -1,9 +1,14 @@
-# CI — build + test matrix and an unbypassable secret scan on every push/PR to main.
+# CI — build + test matrix and a checksum-verified secret scan.
 #
 # Build jobs run exactly the local presets (cmake --preset X && build && ctest) so CI
 # and local developer runs cannot drift. The asan job is the only place the finite-input
 # asserts and death tests execute, because the ci/ci-clang presets inherit -DNDEBUG from
-# release. See Documentation/planning/phase-ci/ and ADR-0002 / ADR-0004.
+# release. See Documentation/planning/phase-ci/ and ADR-0002 / ADR-0004 / ADR-0005.
+#
+# Action pins: third-party actions are pinned to full 40-char commit SHAs (not mutable
+# @vN tags), matching ADR-0005's dependency-pinning policy. Dependabot
+# (.github/dependabot.yml) keeps the SHAs updated. The comment after each SHA is the tag
+# it corresponded to when pinned.
 name: CI
 
 on:
@@ -11,20 +16,29 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Full-history secret scan: the per-event scan below only covers the push/PR commit
+  # range, so a weekly cron and a manual trigger run `gitleaks git` over ALL history.
+  schedule:
+    - cron: "17 4 * * 1"  # Mondays 04:17 UTC
+  workflow_dispatch:
 
 # Least privilege: jobs only read the repository.
 permissions:
   contents: read
 
-# Cancel superseded runs on the same ref to save runner time.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Only cancel superseded PR runs; never cancel a run on main (each main commit must
+  # get its own finished test run and push-range secret scan).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     name: ${{ matrix.name }}
+    # Skip the pure-scan triggers; building on cron/dispatch adds nothing.
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -37,26 +51,44 @@ jobs:
             preset: asan
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false  # no later step needs the git token
 
       - name: Install toolchain
         run: |
+          set -euo pipefail
           sudo apt-get update
-          # ninja for all builds; clang + clang-tidy because every preset here either
-          # builds with Clang or (the GCC ci preset) runs clang-tidy via RADAR_CLANG_TIDY.
-          sudo apt-get install -y ninja-build clang clang-tidy
+          sudo apt-get install -y ninja-build
+          # Match the local linter version (clang/clang-tidy 21): the distro ships 18,
+          # which has FEWER checks, so CI would enforce less than local (drift). Install
+          # 21 from the official LLVM apt repo and point the unversioned names at it so
+          # the CMake presets need no changes. (M3 from the PR #7 review.)
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          source /etc/os-release
+          echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm-21.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y clang-21 clang-tidy-21
+          sudo update-alternatives --install /usr/bin/clang        clang        /usr/bin/clang-21 100
+          sudo update-alternatives --install /usr/bin/clang++      clang++      /usr/bin/clang++-21 100
+          sudo update-alternatives --install /usr/bin/clang-tidy   clang-tidy   /usr/bin/clang-tidy-21 100
           cmake --version
-          ninja --version
+          clang --version
+          clang-tidy --version
 
-      # Cache the FetchContent dependency sources (Eigen/GoogleTest/json/CLI11) so only
-      # the first run pays the download. Keyed on Dependencies.cmake: a pin change busts it.
       - name: Cache dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
         with:
-          path: build/${{ matrix.preset }}/_deps
-          key: deps-${{ matrix.preset }}-${{ hashFiles('cmake/Dependencies.cmake') }}
+          # Cache only the fetched SOURCE trees (preset-independent, identical across
+          # presets), not the per-preset build/subbuild dirs. Keyed on Dependencies.cmake:
+          # a pin change produces a new key; restore-keys may seed from an older cache,
+          # after which FetchContent re-fetches the new SHA (so builds stay correct).
+          path: build/${{ matrix.preset }}/_deps/*-src
+          key: deps-src-${{ hashFiles('cmake/Dependencies.cmake') }}
           restore-keys: |
-            deps-${{ matrix.preset }}-
+            deps-src-
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
@@ -72,20 +104,40 @@ jobs:
   gitleaks:
     name: gitleaks (secret scan)
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Checkout (full history)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
-          fetch-depth: 0  # full history so the scan covers every commit, not just HEAD
+          fetch-depth: 0              # full history available for the scheduled --all scan
+          persist-credentials: false
 
-      # Server-side secret scan using the tracked .gitleaks.toml. Unlike the local
-      # pre-commit hook, this cannot be skipped with --no-verify, so it is the real control
-      # the README promises (lines 73-74).
-      - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          # Required by gitleaks-action@v2 to scan pull_request events (breaking
-          # change in the action). The automatically-provided token is read-only
-          # here (workflow permissions are contents: read).
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_CONFIG: .gitleaks.toml
+      # Install the SAME pinned, checksum-verified gitleaks the local pre-commit hook uses
+      # (scripts/setup-hooks.sh, ADR-0005). This replaces gitleaks-action@v2, which pulled
+      # an older default version (8.24.3) with no checksum step, needed GITHUB_TOKEN, and is
+      # license-gated for organizations. (H2 / M2 / M1-action / L4 from the PR #7 review.)
+      - name: Install gitleaks (pinned + checksum-verified)
+        run: |
+          set -euo pipefail
+          VER=8.30.1
+          SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+          TMP="$(mktemp -d)"
+          curl -fsSL -o "$TMP/gl.tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz"
+          echo "${SHA256}  $TMP/gl.tgz" | sha256sum -c -
+          sudo tar -xzf "$TMP/gl.tgz" -C /usr/local/bin gitleaks
+          rm -rf "$TMP"
+          gitleaks version
+
+      # push/pull_request: scan only the event's commit range (fast gate on new commits).
+      # schedule/workflow_dispatch: scan ALL history (the real full-history control).
+      - name: Scan
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Full-history scan (gitleaks git --all)"
+            gitleaks git --redact --no-banner --config .gitleaks.toml --log-opts="--all" .
+          else
+            echo "Event-range scan (new commits only)"
+            gitleaks git --redact --no-banner --config .gitleaks.toml .
+          fi

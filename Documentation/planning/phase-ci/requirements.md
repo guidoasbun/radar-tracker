@@ -26,8 +26,10 @@ In scope:
   - `ci-clang` preset — Clang, same strict set.
   - `asan` preset — Clang ASan/UBSan, **runs `ctest`** so the asserts and death tests
     actually execute (the N2 fix). The spec mandates ASan/UBSan "on every push."
-- A **gitleaks** job scanning full history, independent of the local pre-commit hook and
-  not skippable by contributors (the unbypassable server-side scan the README promises).
+- A **gitleaks** job that scans the event's commit range on every push/PR, plus a weekly
+  `schedule` + `workflow_dispatch` that scan **full history** (`--log-opts=--all`). It uses the
+  same pinned, checksum-verified gitleaks binary as the local hook — independent of the local
+  pre-commit hook and not skippable by contributors.
 - FetchContent dependency caching so runs are reasonably fast after the first.
 
 Out of scope / deferred:
@@ -52,10 +54,14 @@ An `asan` job (Clang, per ADR-0004) builds and runs `ctest` under ASan/UBSan. Be
 and the `MotionDeathTest` cases execute. Any sanitizer finding or failed death test fails
 the job.
 
-### AC-4 — Unbypassable secret scan
-A gitleaks job runs `gitleaks` over the repository (full history) using the tracked
-`.gitleaks.toml`. It runs server-side on every push/PR, so unlike the local pre-commit
-hook it cannot be skipped with `--no-verify`. A finding fails the job.
+### AC-4 — Checksum-verified secret scan, unbypassable once required
+A gitleaks job runs the **same** pinned, checksum-verified gitleaks 8.30.1 binary as the local
+hook (`sha256sum -c`, ADR-0005) with the tracked `.gitleaks.toml`. On push/PR it scans the
+event's commit range; a weekly `schedule` and `workflow_dispatch` scan **full history**
+(`--log-opts=--all`). It is server-side, so unlike the local hook it cannot be skipped with
+`--no-verify`. A finding fails the job. **Caveat (H1):** the job only *blocks* a merge once it
+is set as a required status check in branch protection — tracked separately, since that is a
+repo setting, not workflow code.
 
 ### AC-5 — Valid and self-consistent
 - The workflow is valid YAML and references only presets that exist in

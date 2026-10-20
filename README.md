@@ -84,7 +84,7 @@ on `ubuntu-24.04`:
 | `gcc (ci preset)` | release + `-Werror` + clang-tidy build and full test suite (GCC) |
 | `clang (ci-clang preset)` | the same strict gate under Clang |
 | `asan (Clang, ASan/UBSan)` | sanitizer-clean **and** runs the test suite as a Debug build, so `assert`-based preconditions and death tests (compiled out of the `ci` presets by `-DNDEBUG`) actually execute |
-| `gitleaks (secret scan)` | server-side, full-history secret scan with `.gitleaks.toml` — cannot be skipped with `--no-verify`, unlike the local hook |
+| `gitleaks (secret scan)` | server-side secret scan with the same pinned, checksum-verified gitleaks as the local hook (`.gitleaks.toml`) — scans the commit range on push/PR and **full history** on a weekly schedule; cannot be skipped with `--no-verify` |
 
 The build jobs run exactly the local presets (`cmake --preset … && cmake --build … &&
 ctest --preset …`), so CI and local developer runs cannot drift.
