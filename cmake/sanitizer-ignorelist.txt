@@ -1,0 +1,19 @@
+# Sanitizer ignorelist (UBSan). Scoped to THIRD-PARTY paths only — never our code.
+#
+# Eigen's SSE packet math (e.g. pabs in Core/arch/SSE/PacketMath.h) builds integer
+# masks like _mm_setr_epi32(0xFFFFFFFF, ...), which UBSan's implicit-conversion check
+# flags as unsigned->signed value change. That is defined, intentional behaviour inside
+# Eigen, not a bug in radar code. Phase 0 (ADR/design risk table) committed to handling
+# such third-party false positives with a *scoped ignorelist* rather than dropping the
+# implicit-conversion check wholesale — this file is that ignorelist.
+#
+# This file is registered as a CMAKE_CONFIGURE_DEPENDS in the top-level CMakeLists, so
+# editing it forces a re-configure and rebuild — a stale asan build cannot silently keep
+# a removed suppression or miss an added one.
+#
+# Format: https://clang.llvm.org/docs/SanitizerSpecialCaseList.html
+# Match Eigen source by path substring (src: uses the file name/path, wildcards allowed).
+
+[implicit-conversion]
+src:*/_deps/eigen3-src/*
+src:*/Eigen/*

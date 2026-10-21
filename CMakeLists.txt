@@ -24,6 +24,14 @@ option(RADAR_HARDENING       "Enable OpenSSF-recommended hardening flags" OFF)
 option(RADAR_CLANG_TIDY      "Run clang-tidy on our targets (enabled by the ci presets)" OFF)
 option(RADAR_BUILD_TESTS     "Build the test suite" ON)
 
+# The asan preset passes -fsanitize-ignorelist=cmake/sanitizer-ignorelist.txt via a
+# compiler flag, which CMake does not track as an input — so editing the ignorelist
+# would not, on its own, trigger a rebuild and a stale asan build could hide an added
+# or removed suppression. Register it as a configure dependency so a change forces a
+# re-configure (and thus a rebuild of the sanitized objects).
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${PROJECT_SOURCE_DIR}/cmake/sanitizer-ignorelist.txt")
+
 # clang-tidy command applied PER-TARGET (via radar_enable_tidy) so it analyzes
 # only our code, never the fetched dependency sources (GoogleTest etc.).
 if(RADAR_CLANG_TIDY)

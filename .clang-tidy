@@ -18,6 +18,14 @@
 #       too aggressive with umbrella headers (Eigen) in this toolchain.
 #   - cert-err58-cpp:
 #       fires on GoogleTest's static TEST() registration objects; not our code.
+#   - clang-analyzer-security.ArrayBound:
+#       path-sensitive false positive inside Eigen's hand-vectorized GEMM
+#       (Core/products/GeneralBlockPanelKernel.h, "m_staticB" out-of-bound) reached
+#       when the analyzer inlines a fixed-size matrix product such as the Kalman
+#       gain's llt.solve(). The access is in-bounds by Eigen's compile-time sizing;
+#       the analyzer cannot prove it. Analyzer diagnostics are not subject to
+#       HeaderFilterRegex, so this leaks from the (SYSTEM) Eigen header as one of our
+#       errors. Disabled narrowly — the rest of clang-analyzer-* stays on our code.
 
 Checks: >
   bugprone-*,
@@ -33,7 +41,8 @@ Checks: >
   -cppcoreguidelines-avoid-magic-numbers,
   -readability-magic-numbers,
   -misc-include-cleaner,
-  -cert-err58-cpp
+  -cert-err58-cpp,
+  -clang-analyzer-security.ArrayBound
 
 # Enforcement is driven by the preset flag (--warnings-as-errors=*). Leaving this
 # empty keeps ad-hoc `clang-tidy` invocations non-fatal for exploration.

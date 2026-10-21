@@ -5,7 +5,8 @@
 add_library(radar STATIC
   linalg.cpp
   motion.cpp
-  sensor.cpp)
+  sensor.cpp
+  kalman.cpp)
 
 # Public headers: the checked-in include/ tree plus the generated version header
 # under the build dir. Use PROJECT_SOURCE_DIR/PROJECT_BINARY_DIR so the library
