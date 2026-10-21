@@ -6,19 +6,30 @@
 // Monte-Carlo runs that reuse motion (truth) + sensor (Gaussian noise).
 //
 // MODEL-MATCHED TRUTH (the design that makes NEES a real chi^2(4) test). The truth is
-// propagated with the FILTER'S OWN process-noise model injected:
+// propagated with the FILTER'S OWN process-noise model injected — a discrete
+// white-noise acceleration, sampled DIRECTLY from the physical model, one random
+// acceleration per axis per scan applied through the noise-gain vector G = [dt^2/2, dt]:
 //
-//     truth_{k+1} = F · truth_k + chol(Q) · w,   w ~ N(0, I4),
+//     a ~ N(0, sigma_a^2);   [pos, vel] += a * [dt^2/2, dt]   (per axis)
 //
-// where Q = process_noise(dt, sigma_a) and chol(Q) is its lower Cholesky factor. With
-// truth and filter sharing the same (F, Q) dynamics, the filter is correctly specified,
-// so posterior NEES = e^T P^-1 e is genuinely chi^2(4) (mean 4.0) over the WHOLE
-// post-burn-in tail — not a transient that merely passes through a band. (An earlier
-// revision propagated truth as a NOISE-FREE straight line; that made the filter
-// permanently under-confident in velocity, so steady-state NEES settled near 2.4 and
-// the ~3.6 seen early was just the initial-uncertainty transient on its way down. PR
-// #12 review caught this; injecting Q is the fix.) NIS was ~2.0 either way because R
-// dominates S.
+// This has covariance E[(Ga)(Ga)^T] = sigma_a^2 * G*G^T — exactly the filter's Q — so
+// with truth and filter sharing the same (F, Q) dynamics the filter is correctly
+// specified, and posterior NEES = e^T P^-1 e is genuinely chi^2(4) (mean ~3.9) over the
+// WHOLE post-burn-in tail, not a transient passing through a band.
+//
+// Two deliberate properties of sampling through G rather than factorizing Q:
+//   * NO factorization. Q = sigma_a^2 * G*G^T is rank 2 (each 2x2 axis block is a rank-1
+//     outer product, determinant exactly 0), i.e. positive SEMI-definite, NOT SPD. A
+//     chol(Q) via LLT does not exist in exact arithmetic and only "succeeded" at
+//     dt=0.1/sigma_a=5 by a +5.6e-17 rounding fluke (PR #12 re-review caught this).
+//     Sampling the acceleration through G needs no Cholesky and holds for any dt/sigma_a.
+//   * Independent of radar::process_noise(). Truth is driven by the physical model, not a
+//     copy of the Q formula, so a mis-scaled production Q (Q x0.1 / x10) is a real
+//     truth/filter mismatch NEES catches — not a common-mode scaling that hides it
+//     (ADR-0006's F trap; a shared-Q path was verified to let Q x0.1 pass).
+// (An even earlier revision propagated truth NOISE-FREE; that made the filter permanently
+// under-confident in velocity, so steady-state NEES settled near 2.4 and the ~3.6 seen in
+// a narrow early window was just the initial-uncertainty transient on its way down.)
 //
 // SCOPE (see Documentation/planning/phase-k/{requirements,design}.md). This is a
 // self-consistency + common-bug battery, NOT a tuning oracle. The discriminating power
@@ -81,33 +92,6 @@ static_assert(kRuns > 0, "need at least one Monte-Carlo run");
 const radar::KalmanConfig kCfg{.dt = 0.1, .sigma_a = 5.0, .sigma_m = 50.0};  // spec
 const radar::SensorConfig kSensor{.sigma_m = 50.0};                          // matches
 
-// Process-noise covariance Q for the truth injection, built from the spec's
-// white-noise-acceleration formula by HAND — deliberately NOT radar::process_noise().
-// If truth drew its noise from the same function the filter predicts with, a bug in
-// process_noise would scale truth and filter identically and NEES could not see it
-// (the common-mode trap ADR-0006 names for F). Driving truth with an independent Q
-// means a mis-scaled production Q (e.g. Q x0.1 / x10) creates a real truth/filter
-// mismatch that NEES catches. For the CORRECT filter this literal equals
-// process_noise(dt, sigma_a) exactly, so truth and a correct filter stay matched and
-// NEES ~ chi^2(4). (This literal mirrors test_kalman's ProcessNoiseMatchesSpecLiteral.)
-Eigen::Matrix4d truth_process_noise_literal() {
-  const double dt = kCfg.dt;
-  const double t2 = dt * dt;
-  const double t3 = t2 * dt;
-  const double t4 = t3 * dt;
-  const double qa = kCfg.sigma_a * kCfg.sigma_a;
-  Eigen::Matrix4d q = Eigen::Matrix4d::Zero();
-  q(radar::kPx, radar::kPx) = t4 / 4.0;
-  q(radar::kPy, radar::kPy) = t4 / 4.0;
-  q(radar::kVx, radar::kVx) = t2;
-  q(radar::kVy, radar::kVy) = t2;
-  q(radar::kPx, radar::kVx) = t3 / 2.0;
-  q(radar::kVx, radar::kPx) = t3 / 2.0;
-  q(radar::kPy, radar::kVy) = t3 / 2.0;
-  q(radar::kVy, radar::kPy) = t3 / 2.0;
-  return qa * q;
-}
-
 // Posterior NEES = e^T P^-1 e, computed through the SAME SPD guard the production filter
 // uses (LLT), not a raw solve. Returns +inf (not a throw) if P is not SPD, so the caller
 // still records a sample that the finiteness check in AC-K3 will catch and attribute to
@@ -140,13 +124,27 @@ RunSamples run_filter(std::uint64_t seed) {
   RunSamples out;
   std::mt19937_64 rng{seed};  // NOLINT(cert-msc32-c,cert-msc51-cpp): fixed test seed
 
-  // Truth's process noise is the INDEPENDENT literal Q (not process_noise — see the
-  // comment on truth_process_noise_literal: avoids the common-mode trap). Q from the
-  // white-noise-acceleration model is SPD for dt > 0, so its Cholesky factor exists.
-  const Eigen::Matrix4d q = truth_process_noise_literal();
-  const Eigen::LLT<Eigen::Matrix4d> q_llt(q);
-  EXPECT_EQ(q_llt.info(), Eigen::Success) << "literal truth Q must be SPD for chol(Q)";
-  const Eigen::Matrix4d chol_q = q_llt.matrixL();
+  // Truth gets the SAME discrete white-noise-acceleration process the filter's Q models,
+  // sampled DIRECTLY from the physical model — one random acceleration per axis per scan,
+  // applied through the noise-gain vector G = [dt^2/2, dt]:
+  //
+  //     a ~ N(0, sigma_a^2);   [pos, vel] += a * [dt^2/2, dt]   (per axis, x and y)
+  //
+  // This produces exactly the WNA covariance E[(Gw)(Gw)^T] = sigma_a^2 * G*G^T, i.e. the
+  // same Q the filter predicts with, so with truth and filter model-matched NEES is a
+  // genuine chi^2(4). Two deliberate properties:
+  //   * NO factorization. Q = sigma_a^2 * G*G^T is rank 2 per 4x4 (each 2x2 axis block is
+  //     a rank-1 outer product with determinant exactly 0), so it is positive SEMI-definite,
+  //     NOT SPD — chol(Q) via LLT does not exist in exact arithmetic and only "succeeded"
+  //     for dt=0.1/sigma_a=5 by a +5.6e-17 rounding fluke (PR #12 re-review). Sampling the
+  //     acceleration through G needs no Cholesky and works for any dt/sigma_a.
+  //   * Independent of radar::process_noise(). Truth is driven by the physical model, not a
+  //     copy of the Q formula, so a mis-scaled production Q (Q x0.1 / x10) creates a real
+  //     truth/filter mismatch NEES catches — not a common-mode scaling that hides it
+  //     (ADR-0006's F trap; verified: a shared-Q path lets Q x0.1 pass).
+  const double dt = kCfg.dt;
+  const double g_pos = 0.5 * dt * dt;  // position noise gain dt^2/2
+  const double g_vel = dt;             // velocity noise gain dt
   std::normal_distribution<double> gauss(0.0, 1.0);
 
   // Straight-line CV target at aircraft speed; the process noise perturbs it each scan.
@@ -157,13 +155,15 @@ RunSamples run_filter(std::uint64_t seed) {
       radar::initiate_track(radar::sense({t0}, kSensor, rng)[0].measurement, kCfg);
 
   for (int k = 0; k < kScans; ++k) {
-    // Truth propagation WITH the filter's process noise: truth = F*truth + chol(Q)*w.
-    // Draw w from the same per-run rng (fixed order: w before the sensor draw).
-    Eigen::Vector4d w;
-    for (int i = 0; i < 4; ++i) {
-      w(i) = gauss(rng);
-    }
-    truth = radar::propagate_cv(truth, kCfg.dt) + chol_q * w;
+    // CV propagation, then per-axis acceleration noise through G. Draw the two
+    // accelerations from the per-run rng BEFORE the sensor draw (fixed order).
+    truth = radar::propagate_cv(truth, dt);
+    const double ax = kCfg.sigma_a * gauss(rng);
+    const double ay = kCfg.sigma_a * gauss(rng);
+    truth(radar::kPx) += ax * g_pos;
+    truth(radar::kVx) += ax * g_vel;
+    truth(radar::kPy) += ay * g_pos;
+    truth(radar::kVy) += ay * g_vel;
 
     const radar::TrueTarget t{.id = 0, .position = truth.head<2>()};
     const radar::Measurement z = radar::sense({t}, kSensor, rng)[0].measurement;
@@ -302,7 +302,7 @@ TEST(PhaseK, NisSingleRunInSpecBand) {
   // "mean NIS over a run" instrument. Reused from the ensemble — no re-simulation.
   const double mean_nis = ensemble().run0_mean_nis;
   EXPECT_TRUE(std::isfinite(mean_nis));
-  EXPECT_GT(mean_nis, 1.5);  // spec acceptance band (mean target ~2.0; measured ~2.01)
+  EXPECT_GT(mean_nis, 1.5);  // spec acceptance band (mean target ~2.0; measured ~1.99)
   EXPECT_LT(mean_nis, 2.6);
 }
 
@@ -310,7 +310,7 @@ TEST(PhaseK, NisSingleRunInSpecBand) {
 
 TEST(PhaseK, NisEnsembleMeanTight) {
   // NIS ~ chi^2_2, mean 2.0, pooled over the full post-burn-in tail across all runs
-  // (~18k samples; measured ~2.01). Tight band: a transposed-covariance predict pushes
+  // (~18k samples; measured ~1.99). Tight band: a transposed-covariance predict pushes
   // the pooled mean well outside (measured ~3.5). NIS is position-innovation only, so a
   // gain/Q bug barely moves it — that is by design; NEES (AC-K3) carries those.
   const double mean_nis = ensemble().mean_nis;
@@ -321,12 +321,12 @@ TEST(PhaseK, NisEnsembleMeanTight) {
 // ---- AC-K3 — NEES state consistency (keystone) ----
 
 TEST(PhaseK, NeesEnsembleMeanStateConsistent) {
-  // Posterior NEES = e^T P^-1 e ~ chi^2_4, mean 4.0 (measured ~4.03 over the full tail —
+  // Posterior NEES = e^T P^-1 e ~ chi^2_4, mean 4.0 (measured ~3.93 over the full tail —
   // the model-matched truth makes this a genuine steady-state chi^2(4) result, not a
   // transient, see the file header). Band [3.5, 4.6] keeps the correct filter inside
   // while a lying covariance fails BOTH ways: a 10x-inflated Q (under-confident) measures
-  // ~2.4 (<3.5); a 0.1x Q (over-confident) measures ~12.9 (>4.6); a transposed predict
-  // measures ~168. This is the check the position-only NIS cannot make — it sees the full
+  // ~2.30 (<3.5); a 0.1x Q (over-confident) measures ~12.6 (>4.6); a transposed predict
+  // measures ~172. This is the check the position-only NIS cannot make — it sees the full
   // 4x4 P including the velocity block.
   const Ensemble& en = ensemble();
   EXPECT_TRUE(en.all_nees_finite) << "a NEES sample was non-finite — indefinite posterior P";
@@ -339,10 +339,10 @@ TEST(PhaseK, NeesEnsembleMeanStateConsistent) {
 
 TEST(PhaseK, CovarianceCredibilityVarianceMatch) {
   // NEES restated in physical units: the filter's stated metres-of-uncertainty must
-  // match the errors it actually makes over the tail (measured ratio ~1.03/axis). No
+  // match the errors it actually makes over the tail (measured ratio ~1.00/axis). No
   // explicit coverage-fraction assertion — at this sample size its binomial spread is
   // too wide to be both non-flaky and discriminating; variance matching carries the
-  // same signal cleanly and catches the gross transposed-covariance bug (ratio ~79).
+  // same signal cleanly and catches the gross transposed-covariance bug (ratio ~86).
   const Ensemble& en = ensemble();
   for (int axis = 0; axis < 2; ++axis) {
     const double emp = en.emp_pos_var(axis);

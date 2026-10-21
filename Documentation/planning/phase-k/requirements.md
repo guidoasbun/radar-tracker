@@ -15,20 +15,36 @@ actually makes, measured over fixed-seed Monte-Carlo runs that reuse `motion` (t
 over an ensemble, and **covariance credibility**.
 
 **Model-matched truth (the design that makes NEES a real χ²(4) test).** The truth is
-propagated with the filter's own process-noise model injected:
+propagated with the filter's own process-noise model injected — a discrete white-noise
+acceleration sampled **directly from the physical model**, one random acceleration per axis
+per scan applied through the noise-gain vector `G = [dt²/2, dt]`:
 
-> truth<sub>k+1</sub> = F · truth<sub>k</sub> + chol(Q) · w,  w ~ N(0, I₄)
+> a ~ N(0, σ_a²);  [pos, vel] += a · [dt²/2, dt]   (per axis, x and y)
 
-so truth and filter share the same (F, Q) dynamics and the filter is correctly specified.
-Then posterior NEES = `eᵀ·P⁻¹·e` is genuinely χ²(4) (mean 4.0) over the **whole** post-burn-in
-tail — a real steady-state consistency result, not a transient passing through a band. The
-`chol(Q)` factor is built from an **independent, hand-written Q literal** (not
-`radar::process_noise`): if truth drew its noise from the same function the filter predicts
-with, a bug in `process_noise` would scale truth and filter identically and NEES could not
-see it (the common-mode trap ADR-0006 names for F). An earlier revision propagated truth as
-a noise-free straight line and measured NEES over a narrow early window where it happened to
-pass ~3.6 on its way down to a steady ~2.4; PR #12 review correctly flagged that window as a
-transient, not a χ²(4) result. Injecting Q is the fix.
+This has covariance `σ_a²·G·Gᵀ` — exactly the filter's `Q` — so truth and filter share the
+same (F, Q) dynamics, the filter is correctly specified, and posterior NEES = `eᵀ·P⁻¹·e` is
+genuinely χ²(4) (mean ~3.9) over the **whole** post-burn-in tail — a real steady-state
+consistency result, not a transient passing through a band.
+
+Two deliberate properties of sampling through `G` rather than factorizing `Q`:
+
+- **No factorization.** `Q = σ_a²·G·Gᵀ` is **rank 2, positive *semi*-definite — not SPD**
+  (each 2×2 axis block is a rank-1 outer product with determinant exactly 0). A `chol(Q)`
+  via `LLT` does not exist in exact arithmetic; it only "succeeded" at `dt=0.1 / σ_a=5` by a
+  +5.6e-17 rounding fluke (PR #12 re-review caught this — a retune, compiler, or FMA change
+  would have broken the whole suite). Sampling the acceleration through `G` needs no
+  Cholesky and holds for any `dt`/`σ_a`.
+- **Independent of `radar::process_noise`.** Truth is driven by the physical model, not a
+  copy of the `Q` formula, so a mis-scaled production `Q` (`Q ×0.1` / `×10`) is a real
+  truth/filter mismatch NEES catches — not a common-mode scaling that hides it (the trap
+  ADR-0006 names for F; a shared-`Q` path was verified to let `Q ×0.1` pass). This is a
+  stronger independence argument than a hand-copied `Q` literal, which would merely mirror
+  the spec formula `test_kalman::ProcessNoiseMatchesSpecLiteral` already pins.
+
+(An earlier revision propagated truth noise-free and measured NEES over a narrow early window
+where it happened to pass ~3.6 on its way down to a steady ~2.4; PR #12 review correctly
+flagged that window as a transient, not a χ²(4) result. Injecting the process noise is the
+fix; sampling it through `G` is what makes the injection sound for any configuration.)
 
 ## What this battery is — and is not
 
@@ -39,7 +55,7 @@ Being honest about scope keeps the thresholds meaningful and sets up M2 correctl
   discriminating power is against **implementation bugs** that break the covariance
   structure: a transposed covariance predict (`Fᵀ·P·F`), a **mis-scaled `Q` in either
   direction** (an over-confident `Q ×0.1` now fails as loudly as an under-confident `Q ×10`,
-  because truth uses the independent literal Q), an `S` that omits `R`, a non-Joseph update
+  because truth is driven independently of process_noise), an `S` that omits `R`, a non-Joseph update
   that drifts non-PSD. Each such bug pushes NEES and/or NIS and/or the convergence ratio off
   its expected value by far more than the Monte-Carlo noise (measured in AC-K6 / design.md §7).
 - **A known blind spot (stated honestly):** a wrong *gain scale* (e.g. a half-gain `K`) is
@@ -86,7 +102,7 @@ A new `tests/test_phase_k.cpp`, registered via `radar_add_test`, running in the 
 | `dt` | 0.1 s | spec |
 | `σ_a` | 5.0 m/s² | spec default; drives BOTH the filter's Q and the truth's injected process noise |
 | `σ_m` | 50.0 m | spec; sensor and filter agree |
-| truth | CV + process noise | `propagate_cv(truth, dt) + chol(Q_literal)·w`, `w ~ N(0, I₄)` from the per-run RNG |
+| truth | CV + process noise | `propagate_cv(truth, dt)` then per-axis `a·[dt²/2, dt]`, `a ~ N(0, σ_a²)` from the per-run RNG (no factorization) |
 
 Samples per statistic, pooled across M = 100 runs ≈ M·(K−burn-in) = 100·180 = **18 000** for
 NIS, NEES, and credibility alike (one interval now — the full post-burn-in tail).
@@ -96,13 +112,13 @@ NIS, NEES, and credibility alike (one interval now — the full post-burn-in tai
 ### AC-K1 — NIS single-run time-average inside the spec band
 One run (run 0 of the ensemble, reused — no re-simulation), the **time-averaged NIS** over
 the **full post-burn-in tail** `[burn-in, K)` (~180 samples) lies in the spec's acceptance
-band **[1.5, 2.6]** (mean target ~2.0, measured ~2.01). Finite. This is the spec's own "mean
+band **[1.5, 2.6]** (mean target ~2.0, measured ~1.99). Finite. This is the spec's own "mean
 NIS over a run" instrument restated as a test.
 
 ### AC-K2 — NIS Monte-Carlo ensemble mean (tight consistency gate)
 Over the ensemble, NIS pooled across the full post-burn-in tail of every run (~18 000
 samples), the **ensemble-mean NIS** lies in **[1.85, 2.15]**. NIS ~ χ²(2), mean 2.0 (measured
-~2.01); a transposed-covariance predict pushes the pooled mean well outside (measured ~3.5).
+~2.01); a transposed-covariance predict pushes the pooled mean well outside (measured ~3.56).
 NIS is position-innovation only, so a gain/`Q` bug barely moves it — that is by design; NEES
 (AC-K3) carries those.
 
@@ -113,17 +129,17 @@ returns `+∞` on a non-SPD `P`, and AC-K3 asserts **every** sample was finite (
 and the minimum is ≥ 0, so a regression that makes `P` indefinite (broken Joseph form, missing
 symmetrize) fails loudly and is **reported under AC-K3** — not swallowed by a `std::min` (which
 cannot catch NaN) nor misattributed to whichever test ran first. Measured over the **full
-post-burn-in tail**, the **ensemble-mean NEES** lies in **[3.5, 4.6]** (measured ~4.03). Because
+post-burn-in tail**, the **ensemble-mean NEES** lies in **[3.5, 4.6]** (measured ~3.93). Because
 truth is model-matched (process noise injected), this is a genuine steady-state χ²(4) result
 over the whole tail — no window. A lying covariance fails **both ways**: `Q ×10`
-(under-confident) measures ~2.37 (< 3.5); `Q ×0.1` (over-confident) measures ~12.49 (> 4.6); a
-transposed predict ~172. This is the check the position-only NIS cannot make — it sees the full
+(under-confident) measures ~2.30 (< 3.5); `Q ×0.1` (over-confident) measures ~12.6 (> 4.6); a
+transposed predict ~172 (unchanged). This is the check the position-only NIS cannot make — it sees the full
 4×4 `P` including the velocity block.
 
 ### AC-K4 — Covariance credibility (variance matching)
 Over the post-burn-in tail across the ensemble, the **empirical per-axis position-error
 variance** matches the filter's **mean claimed** `P` position variance to within ~15% (each
-axis; measured ratio ~1.03). This is NEES restated in physical units — a reader-facing sanity
+axis; measured ratio ~1.00). This is NEES restated in physical units — a reader-facing sanity
 check that the filter's stated metres-of-uncertainty are real. (An explicit 1-σ
 coverage-fraction assertion is intentionally **omitted**: at this sample size its binomial
 spread is too wide to be both non-flaky and discriminating — variance matching carries the
@@ -140,19 +156,19 @@ filter from a copy of the measurement.
 The bands must be shown to **go red under a wrong filter**, verified during the Phase K
 verify step by temporarily perturbing production `kalman` (each reverted after) and
 recording which statistic fails. Measured outcomes (ensemble over the full post-burn-in
-tail; correct filter = NIS 2.01 / NEES 4.03 / posVarRatio 1.03 / conv 0.18):
+tail; correct filter = NIS 1.99 / NEES 3.93 / posVarRatio 1.00 / conv 0.20):
 
 | Mutation (reverted after) | NIS | NEES | Caught by |
 | --- | --- | --- | --- |
-| transposed covariance predict `Fᵀ·P·F` | 3.50 | 172 | **all** (K2, K3, K4, K5) |
-| `process_noise` `Q ×= 10` (under-confident) | ~2.0 | **2.37** | **K3** (NEES < 3.5) |
-| `process_noise` `Q ×= 0.1` (over-confident) | ~2.0 | **12.49** | **K3** (NEES > 4.6) |
+| transposed covariance predict `Fᵀ·P·F` | 3.56 | 172 | **all** (K2, K3, K4, K5) |
+| `process_noise` `Q ×= 10` (under-confident) | ~2.0 | **2.30** | **K3** (NEES < 3.5) |
+| `process_noise` `Q ×= 0.1` (over-confident) | ~2.0 | **12.6** | **K3** (NEES > 4.6) |
 | half-gain `K` | ~2.0 | ~4.0 | **not here** — `test_kalman::UpdateStateMatchesHandComputed` (unit, deterministic) |
 
 So the battery robustly catches the transposed-covariance bug (every statistic) and a
 mis-scaled `Q` **in both directions** via NEES — the over-confident `Q ×0.1` that the earlier
-windowed/noise-free design missed is now caught loudly (NEES 12.49), because truth draws its
-process noise from the **independent literal Q** so a `process_noise` mutation creates a real
+windowed/noise-free design missed is now caught loudly (NEES 12.6), because truth draws its
+process noise through the independent G-vector model, so a `process_noise` mutation creates a real
 truth/filter mismatch instead of a common-mode scaling. The gain-scale bug is a documented
 blind spot, caught at the unit level instead (see the scope section). A hand-mis-scaled `S`
 asserted inside the test would only check test-side arithmetic and is deliberately **not**

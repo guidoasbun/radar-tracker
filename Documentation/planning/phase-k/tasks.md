@@ -9,8 +9,9 @@
 ## T2 — Implement `tests/test_phase_k.cpp`
 - [x] File-local MC harness: `run_filter(seed) -> RunSamples` (intervals from file-scope
       constants); one `std::mt19937_64` per run threaded through init + the per-scan
-      process-noise draw + every scan's `sense`; **truth = `propagate_cv` + chol(Q_literal)·w**
-      (model-matched); filter via `initiate_track` / `predict` / `update`.
+      process-noise draws + every scan's `sense`; **truth = `propagate_cv` then per-axis
+      `a·[dt²/2, dt]`, `a ~ N(0, σ_a²)`** (model-matched, no factorization — Q is rank-2
+      semi-definite); filter via `initiate_track` / `predict` / `update`.
 - [x] NIS from the **predicted** state (`innovation` + `innovation_covariance`), reusing
       `gate_distance(y, S)` as the exact `yᵀS⁻¹y`; collected over the full post-burn-in tail.
 - [x] NEES from the **posterior** vs truth through the SPD guard `nees()` (`Eigen::LLT`,
@@ -61,18 +62,27 @@ interval `static_assert`s, AC-K5 `tail_err_var < σ_m²`, NIS→full tail, no du
 sim, doc reconciliation. All fixed (commit `ed7989c`).
 
 Round 2 (re-review) — the NEES window was a transient, not χ²(4). **Model-matched truth**
-now injects the filter's process noise into truth (`truth = propagate_cv + chol(Q)·w`), so
-NEES is a genuine χ²(4) over the full tail and the window is dropped. Crucially, truth's Q is
-an **independent literal** (not `process_noise`) — else a `Q` mutation is common-mode and
-invisible (verified: the shared path let `Q ×0.1` pass). Re-mutated production `kalman`
-against the new battery:
-- [x] transposed covariance predict → all 5 red (NEES 172).
-- [x] `Q ×10` (under-confident) → NEES 2.37 < 3.5, red.
-- [x] `Q ×0.1` (over-confident) → NEES 12.49 > 4.6, red — **the mutation round-1's windowed
-      design missed, now caught.**
+injects the filter's process noise into truth so NEES is a genuine χ²(4) over the full tail
+and the window is dropped. This round used `truth = propagate_cv + chol(Q_literal)·w` with an
+independent hand-written `Q` literal to avoid the common-mode trap (verified: a shared-`Q`
+path let `Q ×0.1` pass). Commit `81a17a0`.
+
+Round 3 (re-review of `81a17a0`) — the `chol(Q_literal)` step was unsound: the WNA
+`Q = σ_a²·G·Gᵀ` is **rank 2 / positive semi-definite, not SPD**, so `LLT(Q)` has a zero pivot
+and only "succeeded" at `dt=0.1 / σ_a=5` by a +5.6e-17 rounding fluke — a retune/compiler/FMA
+change would break the whole suite. **Fix:** sample the acceleration directly through the gain
+vector — per axis `a ~ N(0, σ_a²)`, `[pos, vel] += a·[dt²/2, dt]` — same covariance
+`σ_a²·G·Gᵀ`, **no factorization**, still independent of `process_noise` (and a stronger
+independence argument, since it is the physical model rather than a copy of the `Q` formula).
+Removed `truth_process_noise_literal()`, the `LLT`, and the SPD `EXPECT`. Re-measured
+(correct: NIS 1.99 / NEES 3.93 / posVarRatio 1.00 / conv 0.20); bands unchanged. Re-mutated
+production `kalman` against the G-vector battery:
+- [x] transposed covariance predict → all 5 red (NIS 3.56, NEES 172).
+- [x] `Q ×10` (under-confident) → NEES 2.30 < 3.5, red.
+- [x] `Q ×0.1` (over-confident) → NEES 12.6 > 4.6, red (still caught).
 - [x] half-gain → Phase K green (documented blind spot); `test_kalman` unit test red.
-- [x] All reverted; `src/kalman.cpp` zero diff; both nits fixed (`n_tail` comment removed;
-      `nees()` returns `+∞` instead of EXPECT-ing inside the shared ensemble builder).
+- [x] All reverted; `src/kalman.cpp` zero diff. Docs updated to the per-axis G description;
+      the only remaining `chol(Q)` mentions are explanatory (why it is NOT used).
 
 ## Exit criteria
 All ACs in `requirements.md` met; `test_phase_k.cpp` committed and green across
