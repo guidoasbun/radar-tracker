@@ -48,8 +48,13 @@ sensor to generate data, so the M1 module order is:
 3. `sensor` (noise only; P_D=1, no clutter) — enough to feed Monte-Carlo tests — ✅ done (PR #10)
 4. `kalman` — predict, Joseph-form update, innovation, S, gate distance — ✅ done (PR #11)
 5. **Phase K** — exhaustive filter verification battery (gate before building upward) — ✅ done (PR #12)
-6. `io` (config + csv) — load scenario, write CSVs — ⬜ next
-7. `metrics` (RMSE only) — raw vs track error — ⬜
+6. `io` (config + csv) — load scenario, write CSVs — 🔶 in progress (`m1-io`): scenario
+   JSON → validated `ScenarioConfig` (issue #5 rejection at the boundary), CSV **writers**
+   for `truth.csv`/`meas.csv`. **Scoped to writers-only for M1** — CSV *readers* and the
+   `tracks.csv` writer are deferred to when `metrics`/`radar_score` (readers) and the
+   tracker (`tracks.csv`, M2) need them. Throws a dedicated `ConfigError` (not
+   `std::invalid_argument`) so `apps/*` map a bad scenario to exit code 1 — **ADR-0007**.
+7. `metrics` (RMSE only) — raw vs track error — ⬜ (will add the CSV reader it needs)
 8. `apps/radar_sim` — wire it together, run end-to-end, print RMSE — ⬜ (first runnable app)
 9. `tools/plot.py` + README figure — ⬜
 10. `.github/workflows/ci.yml` — build + test on push — ✅ **done, pulled forward** (after
