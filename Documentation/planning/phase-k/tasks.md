@@ -7,17 +7,19 @@
 - [x] `tasks.md` — this checklist.
 
 ## T2 — Implement `tests/test_phase_k.cpp`
-- [x] File-local MC harness: `run_filter(seed) -> RunSamples` (window/tail from file-scope
-      constants); one `std::mt19937_64` per run threaded through init + every scan's
-      `sense`; truth via `propagate_cv`; filter via `initiate_track` / `predict` / `update`.
+- [x] File-local MC harness: `run_filter(seed) -> RunSamples` (intervals from file-scope
+      constants); one `std::mt19937_64` per run threaded through init + the per-scan
+      process-noise draw + every scan's `sense`; **truth = `propagate_cv` + chol(Q_literal)·w**
+      (model-matched); filter via `initiate_track` / `predict` / `update`.
 - [x] NIS from the **predicted** state (`innovation` + `innovation_covariance`), reusing
       `gate_distance(y, S)` as the exact `yᵀS⁻¹y`; collected over the full post-burn-in tail.
-- [x] NEES from the **posterior** vs truth through the SPD guard `nees_or_fail()`
-      (`llt.info() == Success`, each sample finite & ≥ 0); collected over the NEES window.
-- [x] Ensemble accumulation over M = 100 runs, K = 200 scans, burn-in 20, window 40.
+- [x] NEES from the **posterior** vs truth through the SPD guard `nees()` (`Eigen::LLT`,
+      returns `+∞` on non-SPD); collected over the full post-burn-in tail. AC-K3 asserts
+      `all_nees_finite` + `min_nees ≥ 0` so a bad sample is reported under AC-K3.
+- [x] Ensemble accumulation over M = 100 runs, K = 200 scans, burn-in 20 (single interval).
 - [x] `TEST(PhaseK, NisSingleRunInSpecBand)` — AC-K1, [1.5, 2.6].
 - [x] `TEST(PhaseK, NisEnsembleMeanTight)` — AC-K2, [1.85, 2.15].
-- [x] `TEST(PhaseK, NeesEnsembleMeanStateConsistent)` — AC-K3, [3.0, 4.5] over the window, keystone.
+- [x] `TEST(PhaseK, NeesEnsembleMeanStateConsistent)` — AC-K3, [3.5, 4.6] full tail, keystone.
 - [x] `TEST(PhaseK, CovarianceCredibilityVarianceMatch)` — AC-K4, ±15% per axis.
 - [x] `TEST(PhaseK, ConvergenceOverMonteCarlo)` — AC-K5, mean ratio ≤ 0.5, every run ≤ 0.6,
       and filtered tail position-error variance < `σ_m²`.
@@ -50,10 +52,27 @@ Verified against the real `test_phase_k` (release build), not a probe:
       NIS cannot) and that the gain-scale blind spot is covered at the unit level.
 
 ## T6 — Ship
-- [ ] Single clean commit on `phase-k`; push (sets upstream).
-- [ ] Open PR; gated by the 4 required checks (gcc, clang, asan, gitleaks) green +
-      up-to-date before merge. Phase K touches no `.github/workflows/*`, so the token's
-      missing `workflow` scope is not hit.
+- [x] Single clean commit on `phase-k`; push (sets upstream).
+- [x] Open PR #12; gated by the 4 required checks (gcc, clang, asan, gitleaks) — all green.
+
+## T7 — PR #12 review rounds (addressed, each reverified green)
+Round 1 (9 findings) — NEES LLT guard, per-sample finite/≥0 (NaN-safe), `<limits>`,
+interval `static_assert`s, AC-K5 `tail_err_var < σ_m²`, NIS→full tail, no duplicate run-0
+sim, doc reconciliation. All fixed (commit `ed7989c`).
+
+Round 2 (re-review) — the NEES window was a transient, not χ²(4). **Model-matched truth**
+now injects the filter's process noise into truth (`truth = propagate_cv + chol(Q)·w`), so
+NEES is a genuine χ²(4) over the full tail and the window is dropped. Crucially, truth's Q is
+an **independent literal** (not `process_noise`) — else a `Q` mutation is common-mode and
+invisible (verified: the shared path let `Q ×0.1` pass). Re-mutated production `kalman`
+against the new battery:
+- [x] transposed covariance predict → all 5 red (NEES 172).
+- [x] `Q ×10` (under-confident) → NEES 2.37 < 3.5, red.
+- [x] `Q ×0.1` (over-confident) → NEES 12.49 > 4.6, red — **the mutation round-1's windowed
+      design missed, now caught.**
+- [x] half-gain → Phase K green (documented blind spot); `test_kalman` unit test red.
+- [x] All reverted; `src/kalman.cpp` zero diff; both nits fixed (`n_tail` comment removed;
+      `nees()` returns `+∞` instead of EXPECT-ing inside the shared ensemble builder).
 
 ## Exit criteria
 All ACs in `requirements.md` met; `test_phase_k.cpp` committed and green across

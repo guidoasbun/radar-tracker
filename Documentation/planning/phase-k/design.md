@@ -19,10 +19,10 @@ runs (no redundant simulation):
 
 ```cpp
 struct RunSamples {
-  std::vector<double> nis;   // y^T S^-1 y over [burn-in, K)          (chi^2_2, full tail)
-  std::vector<double> nees;  // e^T P^-1 e over [burn-in, burn-in+W)  (chi^2_4, window)
-  std::vector<Eigen::Vector2d> pos_err;        // position error per window scan
-  std::vector<Eigen::Vector2d> pos_var_claim;  // P(px,px), P(py,py) per window scan
+  std::vector<double> nis;   // y^T S^-1 y over [burn-in, K)   (chi^2_2, full tail)
+  std::vector<double> nees;  // e^T P^-1 e over [burn-in, K)   (chi^2_4, full tail)
+  std::vector<Eigen::Vector2d> pos_err;        // position error per post-burn-in scan
+  std::vector<Eigen::Vector2d> pos_var_claim;  // P(px,px), P(py,py) per post-burn-in scan
   double tail_track_sq{0.0};  // sum |est_pos - truth_pos|^2 over the late tail
   double tail_raw_sq{0.0};    // sum |z - truth_pos|^2 over the late tail
 };
@@ -30,77 +30,86 @@ struct RunSamples {
 RunSamples run_filter(std::uint64_t seed);  // intervals from file-scope constants
 ```
 
-NEES goes through `nees_or_fail()`, which runs the production SPD guard (`Eigen::LLT` +
-`info() == Success`) and asserts each sample is finite and ≥ 0 — a regression that makes `P`
-indefinite fails loudly rather than feeding a meaningless solve into the band. NIS spans the
-full post-burn-in tail (it does not drift); NEES/credibility span the window (NEES does).
+NEES goes through `nees(e, P)`, which runs the production SPD guard (`Eigen::LLT`) and
+returns `+∞` if `info() != Success`; AC-K3 then asserts every sample was finite and the
+minimum ≥ 0, so an indefinite `P` fails under AC-K3 rather than raising a gtest expectation
+inside the shared ensemble builder (where it would be misreported). NIS, NEES, and
+credibility all span the full post-burn-in tail — the model-matched truth makes both
+statistics stationary there, so no window is needed.
 
 Inside `run_filter`:
-- **One** `std::mt19937_64 rng{seed}` for the whole run, threaded through the init
-  `sense` and every scan's `sense`. This mirrors the real sim's "single scenario
-  generator" contract and is what makes "runs are independent, a run is reproducible"
-  literally true — not fresh generators mid-run.
-- Truth: `Eigen::Vector4d` propagated by `motion::propagate_cv(truth, dt)` each scan.
-  Initial truth is a straight-line CV target at aircraft speed (e.g. `v = (200, −100)`),
-  which the existing `test_kalman` convergence smoke already uses — reused for continuity.
+- **One** `std::mt19937_64 rng{seed}` for the whole run, threaded through the init `sense`,
+  the per-scan process-noise draw `w`, and every scan's `sense` (fixed order: `w` before the
+  sensor draw). This mirrors the real sim's single-generator contract and makes "runs
+  independent, a run reproducible" literally true.
+- **Truth obeys the filter's own model:** `truth = propagate_cv(truth, dt) + chol(Q)·w`,
+  `w ~ N(0, I₄)`. `chol(Q)` is the Cholesky factor of an **independent, hand-written Q
+  literal** (`truth_process_noise_literal`), *not* `radar::process_noise` — see §4 for why
+  this independence is essential (it is what lets NEES catch a mis-scaled `Q`). Initial truth
+  is a straight-line CV target at aircraft speed (`v = (200, −100)`).
 - Filter: `initiate_track` from the first measurement, then per scan
   `est = update(predict(est, cfg), z, cfg)`.
-- Per scan, **before** the update, compute NIS from the *predicted* state
-  (`innovation` / `innovation_covariance` on the prediction) — innovations are a property
-  of the prediction, which is the textbook NIS. Compute NEES from the *posterior* (the
-  filtered estimate) against truth.
-- Collect tail samples (scan index ≥ `k_scans − tail`) for convergence, and a single
-  fixed late scan's position error + claimed variance for credibility.
+- Per scan, **before** the update, compute NIS from the *predicted* state (`innovation` /
+  `innovation_covariance`) — the textbook NIS. Compute NEES from the *posterior* vs truth.
+- Collect NIS/NEES/pos_err/pos_var_claim over `[burn-in, K)`; accumulate the convergence
+  sums over the late tail `[K−tail, K)`.
 
-Ensemble: `for run in [0, M): acc += run_filter(kBaseSeed + run, K, burnIn)`, pooling
-the per-scan vectors. Means are plain pooled averages.
+Ensemble: `for run in [0, M): acc += run_filter(kBaseSeed + run)`, pooling the per-scan
+vectors. Means are plain pooled averages; run 0's single-run NIS mean is kept for AC-K1.
 
 ## 3. The statistics, mapped to code
 
 | Statistic | Definition | Code |
 | --- | --- | --- |
 | NIS | `yᵀ S⁻¹ y`, 2 DOF | `y = innovation(pred, z)`; `S = innovation_covariance(pred, cfg)`; `gate_distance(y, S)` **is exactly `yᵀS⁻¹y`** with the SPD guard — reuse it rather than re-inverting. Collected over the full post-burn-in tail. |
-| NEES | `eᵀ P⁻¹ e`, 4 DOF | `e = est.x − truth`; `nees_or_fail(e, P)` runs `Eigen::LLT`, asserts `info() == Success` and each sample finite & ≥ 0, then returns `e.dot(llt.solve(e))`. Collected over the window. |
+| NEES | `eᵀ P⁻¹ e`, 4 DOF | `e = est.x − truth`; `nees(e, P)` runs `Eigen::LLT`, returns `+∞` if `info() != Success`, else `e.dot(llt.solve(e))`. Collected over the full post-burn-in tail; AC-K3 checks finiteness + `min ≥ 0`. |
 | convergence ratio | RMS(est−truth)/RMS(z−truth) | pooled `sqrt(Σ track_sq / Σ raw_sq)` over the late tail; plus the absolute check `tail_err_var < σ_m²` |
-| credibility | Var(err) vs mean claimed `P_pos` | per-axis second moment of `pos_err` vs mean `pos_var_claim`, both over the window |
+| credibility | Var(err) vs mean claimed `P_pos` | per-axis second moment of `pos_err` vs mean `pos_var_claim`, both over the full post-burn-in tail |
 
 Reusing `gate_distance` for NIS is deliberate: it is the exact Mahalanobis form the
 filter ships, including the Cholesky SPD guard, so the test measures the production
 quantity, not a re-derivation that could silently differ. NEES uses the same LLT guard via
-`nees_or_fail`, so an indefinite-`P` regression fails loudly rather than landing in-band.
+`nees`, so an indefinite-`P` regression surfaces (as `+∞`) and fails AC-K3 rather than
+landing in-band.
 
 ## 4. Why these thresholds (theory + measurement)
 
 - NIS ~ χ²(2): mean 2, variance 4. NEES ~ χ²(4): mean 4, variance 8.
-- **Measurement intervals (deliberately different).** NIS is averaged over the **full
-  post-burn-in tail** `[kBurnIn, kScans)` = `[20, 200)`; NEES and credibility over the
-  **window** `[kBurnIn, kBurnIn + kWindow)` = `[20, 60)`. On perfectly-CV truth the filter
-  reaches a steady state whose velocity-block covariance is slightly larger than the
-  velocity error it achieves, so the full-tail NEES drifts below 4 to ~2.4 (benign, correct
-  under-confidence), while NIS does **not** drift (full-tail 1.95 vs window 1.97). So NEES
-  must be windowed to keep a principled χ²(4) band, but NIS can use the full tail — which
-  matches the spec's "average over all post-burn-in scans" and catches a covariance bug
-  that appears only late. Measured on the correct filter (M = 100): **NIS ≈ 1.95 (full
-  tail), NEES ≈ 3.61 (window), posVarRatio ≈ 0.99, convergence ≈ 0.18.**
-- **Sample counts:** NIS ≈ 100·180 = 18 000; NEES/credibility ≈ 100·40 = 4 000.
+- **Model-matched truth → χ²(4) over the whole tail.** Because truth is driven by the
+  filter's own `(F, Q)` dynamics (process noise injected, §2), the filter is correctly
+  specified and NEES is a genuine χ²(4) statistic over the **full post-burn-in tail**
+  `[kBurnIn, kScans)` — no window. NIS, NEES, and credibility all use that one interval.
+  (The earlier noise-free-truth revision had to window NEES because a permanently
+  under-confident filter made the full-tail NEES drift to ~2.4; injecting Q removed that
+  drift. PR #12 review flagged the window as a transient, which it was.) Measured on the
+  correct filter (M = 100): **NIS ≈ 2.01, NEES ≈ 4.03, posVarRatio ≈ 1.03, convergence ≈
+  0.18.**
+- **Independent truth Q (the crucial subtlety).** `chol(Q)` for truth comes from a
+  hand-written literal, not `radar::process_noise`. Routing truth through `process_noise`
+  would make a `Q`-scaling mutation scale truth and filter *identically* (common-mode,
+  ADR-0006's F trap), so NEES would stay ~4 and the bug would be invisible — this was
+  observed directly: with the shared path, `Q ×0.1` *passed*; with the independent literal
+  it fails at NEES 12.49. The literal equals `process_noise` for the correct filter, so a
+  correct filter and truth stay matched.
+- **Sample counts:** NIS, NEES, credibility each ≈ 100·180 = 18 000.
 - **Bands, and why they are where they are** (every number measured, then
   mutation-verified — §7):
-  - NIS ensemble **[1.85, 2.15]** — correct 1.95; the only mutation that moves it is the
-    transposed predict (→4.37). Gain/Q leave NIS ≈ 1.9 because NIS sees only the position
+  - NIS ensemble **[1.85, 2.15]** — correct 2.01; the only mutation that moves it is the
+    transposed predict (→3.50). Gain/Q leave NIS ≈ 2.0 because NIS sees only the position
     innovation; that is expected, not a weakness (NEES carries the covariance structure).
-  - NEES ensemble **[3.0, 4.5]** — correct 3.61; catches the transposed predict (→96) and
-    the 10×-`Q` over-inflation (→2.74 < 3.0). This is the keystone band.
-  - Convergence **mean ≤ 0.5 / every run ≤ 0.6** — the spec M1 gate; correct 0.18,
-    pass-through 1.0, transposed predict 0.76.
-  - Credibility **ratio within ±15%/axis** — correct ~0.99; a gross structural bug
-    (transposed predict) sends it to ~70.
-- **Sampling spread vs band width.** If the `M·kWindow = 100·40 = 4000` window samples
-- **Sampling spread vs band width.** If the samples were independent, the pooled-mean SE
-  would be `sqrt(4/18000) ≈ 0.015` for NIS (full tail, 18 000 samples) and `sqrt(8/4000) ≈
-  0.045` for NEES (window, 4 000 samples). Samples within a run are serially correlated, so
-  the effective N is lower and the true SE larger; M = 100 keeps the between-run spread
-  small enough that the bands (±0.15 NIS, −0.6/+0.9 NEES around the measured means) are many
-  SEs wide — non-flaky, confirmed by repeated fixed-seed runs in the verify step.
+  - NEES ensemble **[3.5, 4.6]** — correct 4.03; catches the transposed predict (→172), the
+    10×-`Q` under-inflation (→2.37 < 3.5) **and** the 0.1×-`Q` over-inflation (→12.49 > 4.6).
+    This is the keystone band, and it now bites in **both** directions.
+  - Convergence **mean ≤ 0.5 / every run ≤ 0.6** + `tail_err_var < σ_m²` — the spec M1 gate;
+    correct 0.18, pass-through 1.0, transposed predict fails.
+  - Credibility **ratio within ±15%/axis** — correct ~1.03; a gross structural bug
+    (transposed predict) sends it to ~79.
+- **Sampling spread vs band width.** If the ~18 000 samples were independent, the pooled-mean
+  SE would be `sqrt(4/18000) ≈ 0.015` (NIS) and `sqrt(8/18000) ≈ 0.021` (NEES). Samples
+  within a run are serially correlated, so the effective N is lower and the true SE larger;
+  M = 100 keeps the between-run spread small enough that the bands (±0.15 NIS, −0.5/+0.6 NEES
+  around the measured means) are many SEs wide — non-flaky, confirmed by repeated fixed-seed
+  runs in the verify step.
 
 ## 5. Interaction with the toolchain (reused, not new)
 
@@ -135,22 +144,26 @@ to.
 Per AC-K6, the discriminating power is demonstrated by perturbing the **production**
 filter during verify and confirming the battery goes red, then reverting — not by a
 test-side self-check (which would only exercise test arithmetic). Measured outcomes
-(ensemble over the window; correct = NIS 1.97 / NEES 3.61 / conv 0.18):
+(ensemble over the full post-burn-in tail; correct = NIS 2.01 / NEES 4.03 / conv 0.18):
 
-| Mutation (reverted after) | NIS | NEES | conv | Result |
-| --- | --- | --- | --- | --- |
-| transposed covariance predict `Fᵀ·P·F` | 4.37 | 96.3 | 0.76 | **red everywhere** (K2/K3/K4/K5) |
-| `process_noise` `Q ×= 10` | 1.96 | 2.74 | 0.23 | **red via NEES** (< 3.0) |
-| `process_noise` `Q ×= 0.1` | 1.97 | 4.00 | 0.15 | borderline in-window; drifts redder past it |
-| half-gain `K` | 1.97 | 3.70 | 0.15 | **not caught here** — unit test catches it |
+| Mutation (reverted after) | NIS | NEES | Result |
+| --- | --- | --- | --- |
+| transposed covariance predict `Fᵀ·P·F` | 3.50 | 172 | **red everywhere** (K2/K3/K4/K5) |
+| `process_noise` `Q ×= 10` (under-confident) | ~2.0 | 2.37 | **red via NEES** (< 3.5) |
+| `process_noise` `Q ×= 0.1` (over-confident) | ~2.0 | 12.49 | **red via NEES** (> 4.6) |
+| half-gain `K` | ~2.0 | ~4.0 | **not caught here** — unit test catches it |
 
-The **half-gain blind spot** is real and stated plainly: on clean CV truth a half-gain
-filter still tracks a straight line and stays nearly consistent, so no aggregate
-statistic here flags it. It is caught deterministically by `test_kalman`'s
-`UpdateStateMatchesHandComputed` (the PR #11 half-gain mutation), and it becomes
-statistically visible only under a maneuver (M2 / CT scenario). Phase K's remit is
-covariance-structure consistency + convergence; the bands are tuned to that and
-documented accordingly.
+Both `Q` directions are caught **because** truth uses the independent literal Q: a
+`process_noise` mutation changes only the filter, creating a real truth/filter mismatch. (A
+prior attempt that drove truth from `process_noise` directly made `Q ×0.1` *pass* — the
+common-mode trap; switching to the independent literal is what fixed it. Recorded here so the
+next reader does not "simplify" it back.)
+
+The **half-gain blind spot** is real and stated plainly: a half-gain filter still tracks and
+stays nearly consistent (NEES ~4.0), so no aggregate statistic here flags it. It is caught
+deterministically by `test_kalman`'s `UpdateStateMatchesHandComputed` (the PR #11 half-gain
+mutation), and becomes statistically visible only under a maneuver (M2 / CT scenario). Phase
+K's remit is covariance-structure consistency + convergence; the bands are tuned to that.
 
 ## 8. What this unblocks
 
