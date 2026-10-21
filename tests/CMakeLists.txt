@@ -44,3 +44,8 @@ radar_add_test(test_motion test_motion.cpp)
 radar_add_test(test_sensor test_sensor.cpp)
 radar_add_test(test_kalman test_kalman.cpp)
 radar_add_test(test_phase_k test_phase_k.cpp)
+radar_add_test(test_io test_io.cpp)
+# test_io loads the shipped scenarios/single.json; give it the source-tree path so the
+# test is independent of the working directory CTest runs from.
+target_compile_definitions(test_io
+  PRIVATE RADAR_SCENARIOS_DIR="${PROJECT_SOURCE_DIR}/scenarios")
