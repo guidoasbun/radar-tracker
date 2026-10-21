@@ -1,5 +1,7 @@
 # M1 · `motion` module — Tasks
 
+> **Status: ✅ complete — merged (PR #4).**
+
 Ordered checklist; doubles as the execution record.
 
 ## T1 — Header + source

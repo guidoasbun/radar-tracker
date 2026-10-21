@@ -1,5 +1,7 @@
 # Phase 0 — Scaffold & Toolchain · Tasks
 
+> **Status: ✅ complete — merged (PR #2).**
+
 Ordered checklist. Each task is small and leaves the repo in a buildable or
 clearly-in-progress state. Check off as completed; this doubles as the execution record.
 
