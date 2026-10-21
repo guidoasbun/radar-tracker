@@ -7,18 +7,21 @@
 - [x] `tasks.md` — this checklist.
 
 ## T2 — Implement `tests/test_phase_k.cpp`
-- [ ] File-local MC harness: `run_filter(seed, k, burn_in) -> RunSamples`; one
-      `std::mt19937_64` per run threaded through init + every scan's `sense`; truth via
-      `propagate_cv`; filter via `initiate_track` / `predict` / `update`.
+- [x] File-local MC harness: `run_filter(seed) -> RunSamples` (window/tail from file-scope
+      constants); one `std::mt19937_64` per run threaded through init + every scan's
+      `sense`; truth via `propagate_cv`; filter via `initiate_track` / `predict` / `update`.
 - [x] NIS from the **predicted** state (`innovation` + `innovation_covariance`), reusing
-      `gate_distance(y, S)` as the exact `yᵀS⁻¹y`.
-- [x] NEES from the **posterior** vs truth: `e.dot(est.P.llt().solve(e))`; assert ≥ 0.
+      `gate_distance(y, S)` as the exact `yᵀS⁻¹y`; collected over the full post-burn-in tail.
+- [x] NEES from the **posterior** vs truth through the SPD guard `nees_or_fail()`
+      (`llt.info() == Success`, each sample finite & ≥ 0); collected over the NEES window.
 - [x] Ensemble accumulation over M = 100 runs, K = 200 scans, burn-in 20, window 40.
 - [x] `TEST(PhaseK, NisSingleRunInSpecBand)` — AC-K1, [1.5, 2.6].
 - [x] `TEST(PhaseK, NisEnsembleMeanTight)` — AC-K2, [1.85, 2.15].
 - [x] `TEST(PhaseK, NeesEnsembleMeanStateConsistent)` — AC-K3, [3.0, 4.5] over the window, keystone.
 - [x] `TEST(PhaseK, CovarianceCredibilityVarianceMatch)` — AC-K4, ±15% per axis.
-- [x] `TEST(PhaseK, ConvergenceOverMonteCarlo)` — AC-K5, mean ratio ≤ 0.5, every run ≤ 0.6.
+- [x] `TEST(PhaseK, ConvergenceOverMonteCarlo)` — AC-K5, mean ratio ≤ 0.5, every run ≤ 0.6,
+      and filtered tail position-error variance < `σ_m²`.
+- [x] Guards: `static_assert`s on the interval constants; `#include <limits>`.
 
 ## T3 — Build wiring
 - [x] Register `test_phase_k` in `tests/CMakeLists.txt` via `radar_add_test`.
@@ -54,6 +57,7 @@ Verified against the real `test_phase_k` (release build), not a probe:
 
 ## Exit criteria
 All ACs in `requirements.md` met; `test_phase_k.cpp` committed and green across
-`release`/`ci`/`ci-clang`/`asan`; all four mutations shown to turn the battery red and
-reverted. This completes the M1 filter-verification gate and unblocks `io` / `metrics` /
-`apps/radar_sim`.
+`release`/`ci`/`ci-clang`/`asan`; the three production mutations in T5 (transposed-covariance
+predict, `Q ×10`, half-gain) shown to turn the battery red (or, for half-gain, to be caught
+at the unit level — the documented blind spot) and reverted. This completes the M1
+filter-verification gate and unblocks `io` / `metrics` / `apps/radar_sim`.

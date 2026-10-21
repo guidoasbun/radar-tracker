@@ -66,32 +66,42 @@ A new `tests/test_phase_k.cpp`, registered via `radar_add_test`, running in the 
 | M (runs) | 100 | earns the tight NIS/NEES ensemble bands against within-run correlation |
 | K (scans/run) | 200 | long enough for convergence + a long measured tail |
 | burn-in | 20 scans | discard the one-point-init transient before measuring consistency |
-| window | 40 scans | `[burn-in, burn-in+40)` — where χ²(4) holds before benign steady-state under-confidence; NIS/NEES/credibility measured here |
-| tail | 30 scans | late tail `[K−30, K)` for the convergence RMSE ratio (spec M1 gate) |
+| NIS interval | full post-burn-in tail `[burn-in, K)` = 180 scans | NIS does not drift (matches the spec's "average over all post-burn-in scans") |
+| NEES window | 40 scans | `[burn-in, burn-in+40)` — where χ²(4) holds *before* benign steady-state under-confidence; NEES + credibility measured here (NEES, unlike NIS, drifts over the full tail) |
+| convergence tail | 30 scans | late tail `[K−30, K)` for the RMSE ratio (spec M1 gate) |
 | `dt` | 0.1 s | spec |
 | `σ_a` | 5.0 m/s² | spec default (the one tuned knob; fixed here, tuned in M2) |
 | `σ_m` | 50.0 m | spec; sensor and filter agree |
 | truth | straight-line CV | `propagate_cv`; crossing the field at aircraft speed |
 
-Samples per statistic after burn-in ≈ M·(K−burn-in) = 100·180 = 18 000.
+Samples per statistic (pooled across the M = 100 runs): **NIS ≈ M·(K−burn-in) = 100·180 =
+18 000** (full post-burn-in tail); **NEES / credibility ≈ M·window = 100·40 = 4 000** (the
+NEES window). The difference is deliberate — see the NIS/NEES interval rows above and
+design.md §4.
 
 ## Acceptance criteria
 
 ### AC-K1 — NIS single-run time-average inside the spec band
-One run, K scans, burn-in discarded. The **time-averaged NIS** over the tail lies in the
-spec's acceptance band **[1.5, 2.6]** (mean target ~2.0, measurement dim = 2). Finite and
-> 0. This is the spec's own NIS instrument restated as a test.
+One run (run 0 of the ensemble, reused — no re-simulation), the **time-averaged NIS** over
+the **full post-burn-in tail** `[burn-in, K)` (~180 samples) lies in the spec's acceptance
+band **[1.5, 2.6]** (mean target ~2.0, measurement dim = 2). Finite. This is the spec's own
+"mean NIS over a run" instrument restated as a test.
 
 ### AC-K2 — NIS Monte-Carlo ensemble mean (tight consistency gate)
-Over the M×K ensemble (burn-in discarded), the **ensemble-mean NIS** lies in
-**[1.85, 2.15]**. NIS ~ χ²(2), mean 2.0; the pooled-mean sampling spread (with margin for
-within-run correlation, earned by M = 100) keeps a correct filter comfortably inside,
-while a gain/`S` bug lands well outside. Mutation-resistant.
+Over the ensemble, NIS pooled across the **full post-burn-in tail** of every run (~18 000
+samples), the **ensemble-mean NIS** lies in **[1.85, 2.15]**. NIS ~ χ²(2), mean 2.0; the
+pooled-mean sampling spread (with margin for within-run correlation, earned by M = 100)
+keeps a correct filter comfortably inside, while a transposed-covariance bug lands well
+outside (measured ~4.4). Using the full tail — not the NEES window — is deliberate: NIS does
+not drift, so this both matches the spec and catches a covariance bug that appears only
+after the window.
 
 ### AC-K3 — NEES state consistency (keystone)
 Posterior (filtered) NEES per scan `e = x̂ − x_true`, `NEES = eᵀ·P⁻¹·e` ~ χ²(4), mean 4.0.
-`P⁻¹·e` via `Eigen::LLT` solve (`P` is SPD after Joseph + symmetrize). Every per-scan NEES
-is ≥ 0. Measured over the **consistency window** `[burn-in, burn-in + 40)`, the
+`P⁻¹·e` via `Eigen::LLT` — the **same SPD guard the production filter uses**: the test checks
+`llt.info() == Success` and that **every** per-scan NEES is finite and ≥ 0, so a regression
+that makes `P` indefinite (broken Joseph form, missing symmetrize) fails loudly instead of
+feeding a meaningless solve into the band (not a post-hoc `std::min`, which cannot catch NaN). Measured over the **consistency window** `[burn-in, burn-in + 40)`, the
 **ensemble-mean NEES** lies in **[3.0, 4.5]** (measured ~3.6). On perfectly-CV truth the
 filter's covariance reaches a steady state whose velocity block is slightly larger than the
 velocity error it achieves, so the *full-run-tail* NEES drifts below 4 (a benign, correct

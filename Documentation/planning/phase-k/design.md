@@ -19,16 +19,21 @@ runs (no redundant simulation):
 
 ```cpp
 struct RunSamples {
-  std::vector<double> nis;   // y^T S^-1 y per scan in the window  (chi^2_2)
-  std::vector<double> nees;  // e^T P^-1 e per scan in the window  (chi^2_4)
+  std::vector<double> nis;   // y^T S^-1 y over [burn-in, K)          (chi^2_2, full tail)
+  std::vector<double> nees;  // e^T P^-1 e over [burn-in, burn-in+W)  (chi^2_4, window)
   std::vector<Eigen::Vector2d> pos_err;        // position error per window scan
   std::vector<Eigen::Vector2d> pos_var_claim;  // P(px,px), P(py,py) per window scan
   double tail_track_sq{0.0};  // sum |est_pos - truth_pos|^2 over the late tail
   double tail_raw_sq{0.0};    // sum |z - truth_pos|^2 over the late tail
 };
 
-RunSamples run_filter(std::uint64_t seed);  // window/tail from file-scope constants
+RunSamples run_filter(std::uint64_t seed);  // intervals from file-scope constants
 ```
+
+NEES goes through `nees_or_fail()`, which runs the production SPD guard (`Eigen::LLT` +
+`info() == Success`) and asserts each sample is finite and ≥ 0 — a regression that makes `P`
+indefinite fails loudly rather than feeding a meaningless solve into the band. NIS spans the
+full post-burn-in tail (it does not drift); NEES/credibility span the window (NEES does).
 
 Inside `run_filter`:
 - **One** `std::mt19937_64 rng{seed}` for the whole run, threaded through the init
@@ -54,28 +59,33 @@ the per-scan vectors. Means are plain pooled averages.
 
 | Statistic | Definition | Code |
 | --- | --- | --- |
-| NIS | `yᵀ S⁻¹ y`, 2 DOF | `y = innovation(pred, z)`; `S = innovation_covariance(pred, cfg)`; `gate_distance(y, S)` **is exactly `yᵀS⁻¹y`** with the SPD guard — reuse it rather than re-inverting |
-| NEES | `eᵀ P⁻¹ e`, 4 DOF | `e = est.x − truth`; `nees = e.dot(est.P.llt().solve(e))` (LLT: `P` is SPD post-Joseph) |
-| convergence ratio | RMS(est−truth)/RMS(z−truth) | pooled `sqrt(Σ track_sq / Σ raw_sq)` style over the tail |
-| credibility | Var(err) vs mean claimed `P_pos` | sample variance of `pos_err_at_mark` per axis vs mean `pos_var_claim_at_mark` |
+| NIS | `yᵀ S⁻¹ y`, 2 DOF | `y = innovation(pred, z)`; `S = innovation_covariance(pred, cfg)`; `gate_distance(y, S)` **is exactly `yᵀS⁻¹y`** with the SPD guard — reuse it rather than re-inverting. Collected over the full post-burn-in tail. |
+| NEES | `eᵀ P⁻¹ e`, 4 DOF | `e = est.x − truth`; `nees_or_fail(e, P)` runs `Eigen::LLT`, asserts `info() == Success` and each sample finite & ≥ 0, then returns `e.dot(llt.solve(e))`. Collected over the window. |
+| convergence ratio | RMS(est−truth)/RMS(z−truth) | pooled `sqrt(Σ track_sq / Σ raw_sq)` over the late tail; plus the absolute check `tail_err_var < σ_m²` |
+| credibility | Var(err) vs mean claimed `P_pos` | per-axis second moment of `pos_err` vs mean `pos_var_claim`, both over the window |
 
 Reusing `gate_distance` for NIS is deliberate: it is the exact Mahalanobis form the
 filter ships, including the Cholesky SPD guard, so the test measures the production
-quantity, not a re-derivation that could silently differ.
+quantity, not a re-derivation that could silently differ. NEES uses the same LLT guard via
+`nees_or_fail`, so an indefinite-`P` regression fails loudly rather than landing in-band.
 
 ## 4. Why these thresholds (theory + measurement)
 
 - NIS ~ χ²(2): mean 2, variance 4. NEES ~ χ²(4): mean 4, variance 8.
-- **Measurement window.** NIS/NEES/credibility are averaged over `[kBurnIn, kBurnIn +
-  kWindow)` = `[20, 60)`, **not** the whole run. On perfectly-CV truth the filter reaches
-  a steady state whose velocity-block covariance is slightly larger than the velocity
-  error it actually achieves, so the *full-run-tail* NEES drifts below 4 (benign, correct
-  under-confidence). Over the window the χ²(4) expectation genuinely holds. Measured on
-  the correct filter (M = 100): **NIS ≈ 1.97, NEES ≈ 3.61, posVarRatio ≈ 0.99,
-  convergence ≈ 0.18.**
+- **Measurement intervals (deliberately different).** NIS is averaged over the **full
+  post-burn-in tail** `[kBurnIn, kScans)` = `[20, 200)`; NEES and credibility over the
+  **window** `[kBurnIn, kBurnIn + kWindow)` = `[20, 60)`. On perfectly-CV truth the filter
+  reaches a steady state whose velocity-block covariance is slightly larger than the
+  velocity error it achieves, so the full-tail NEES drifts below 4 to ~2.4 (benign, correct
+  under-confidence), while NIS does **not** drift (full-tail 1.95 vs window 1.97). So NEES
+  must be windowed to keep a principled χ²(4) band, but NIS can use the full tail — which
+  matches the spec's "average over all post-burn-in scans" and catches a covariance bug
+  that appears only late. Measured on the correct filter (M = 100): **NIS ≈ 1.95 (full
+  tail), NEES ≈ 3.61 (window), posVarRatio ≈ 0.99, convergence ≈ 0.18.**
+- **Sample counts:** NIS ≈ 100·180 = 18 000; NEES/credibility ≈ 100·40 = 4 000.
 - **Bands, and why they are where they are** (every number measured, then
   mutation-verified — §7):
-  - NIS ensemble **[1.85, 2.15]** — correct 1.97; the only mutation that moves it is the
+  - NIS ensemble **[1.85, 2.15]** — correct 1.95; the only mutation that moves it is the
     transposed predict (→4.37). Gain/Q leave NIS ≈ 1.9 because NIS sees only the position
     innovation; that is expected, not a weakness (NEES carries the covariance structure).
   - NEES ensemble **[3.0, 4.5]** — correct 3.61; catches the transposed predict (→96) and
@@ -85,11 +95,12 @@ quantity, not a re-derivation that could silently differ.
   - Credibility **ratio within ±15%/axis** — correct ~0.99; a gross structural bug
     (transposed predict) sends it to ~70.
 - **Sampling spread vs band width.** If the `M·kWindow = 100·40 = 4000` window samples
-  were independent, the pooled-mean SE would be `sqrt(4/4000) ≈ 0.032` (NIS) and
-  `sqrt(8/4000) ≈ 0.045` (NEES). Samples within a run are serially correlated, so the
-  effective N is lower and the true SE larger; M = 100 keeps the between-run spread small
-  enough that the bands (±0.15 NIS, −0.6/+0.9 NEES around the measured means) are many SEs
-  wide — non-flaky, confirmed by repeated fixed-seed runs in the verify step.
+- **Sampling spread vs band width.** If the samples were independent, the pooled-mean SE
+  would be `sqrt(4/18000) ≈ 0.015` for NIS (full tail, 18 000 samples) and `sqrt(8/4000) ≈
+  0.045` for NEES (window, 4 000 samples). Samples within a run are serially correlated, so
+  the effective N is lower and the true SE larger; M = 100 keeps the between-run spread
+  small enough that the bands (±0.15 NIS, −0.6/+0.9 NEES around the measured means) are many
+  SEs wide — non-flaky, confirmed by repeated fixed-seed runs in the verify step.
 
 ## 5. Interaction with the toolchain (reused, not new)
 
