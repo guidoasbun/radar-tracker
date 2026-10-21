@@ -1,5 +1,7 @@
 # Phase CI · GitHub Actions workflow — Tasks
 
+> **Status: ✅ complete — merged (PR #7).**
+
 ## T1 — Planning docs
 - [x] `requirements.md`, `design.md`, `tasks.md` under `planning/phase-ci/`.
 
@@ -62,9 +64,9 @@
       `6084F3CF…F7421`, referenced via `signed-by=` (not trusted repo-wide in `trusted.gpg.d`).
 - [x] **ADR-0005 stale caveat** — "until then a red PR can still be merged" updated (required
       checks are on).
-- [ ] **Re-verify on CI** — push and confirm the build jobs really run clang 21; expect
-      clang-tidy 21 may surface new findings on our code (the point of the fix) — fix any
-      before the required checks go green.
+- [x] **Re-verify on CI** — the `clang (ci-clang preset)` job has run green on every PR since
+      (PR #7 onward through PR #12), building with Clang + clang-tidy under `-Werror`; any
+      clang-tidy findings on our code were fixed before the required checks went green.
 
 ## Exit criteria
 All ACs met and the PR #7 review addressed: the matrix + checksum-verified gitleaks run on

@@ -1,5 +1,7 @@
 # M1 · `sensor` module — Tasks
 
+> **Status: ✅ complete — merged (PR #10).**
+
 ## T1 — Header + source
 - [x] `include/radar/sensor.hpp`: `SensorConfig{double sigma_m=50}`, `TrueTarget{int id;
       Eigen::Vector2d position}`, and

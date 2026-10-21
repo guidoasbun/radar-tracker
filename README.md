@@ -8,8 +8,14 @@ See [`Documentation/Radar Tracker — Project Specification.md`](Documentation/R
 for the full specification, and [`Documentation/planning/`](Documentation/planning/)
 for the implementation plan (phase by phase).
 
-> Status: **Phase 0 — scaffold & toolchain.** No tracking logic yet; the build
-> system, dependency management, and test harness are in place.
+> Status: **M1 in progress — the Kalman filter is built and verified.** The
+> `types`, `motion` (CV truth), `sensor` (Gaussian noise), and `kalman` (CV linear
+> filter) modules are complete, and **Phase K** — the exhaustive statistical
+> filter-verification battery (NEES/NIS/convergence/covariance credibility) — has
+> passed and merged (PR #12). There is **no runnable application yet**: the `io`
+> (scenario + CSV), `metrics` (RMSE), and `apps/radar_sim` layers that wire a
+> scenario end-to-end are the next M1 steps. For now the build produces `libradar`
+> and the test suite (run with `ctest`, below).
 
 ## Requirements
 

@@ -1,28 +1,31 @@
 # M1 · `kalman` module — Tasks
 
+> **Status: ✅ complete — merged (PR #11).** Phase K (the statistical verification
+> battery that gates on this module) is also merged — see `../phase-k/`.
+
 ## T1 — Header + source
-- [ ] `include/radar/kalman.hpp`: `KalmanConfig{dt, sigma_a, sigma_m}`, `kGate99 = 9.21`,
+- [x] `include/radar/kalman.hpp`: `KalmanConfig{dt, sigma_a, sigma_m}`, `kGate99 = 9.21`,
       `kSigmaV0 = 150`, `MeasurementMatrix` (2×4); declarations for `process_noise`,
       `measurement_matrix`, `measurement_noise`, `predict`, `initiate_track`, `innovation`,
       `innovation_covariance`, `gate_distance`, `update`. Guard `RADAR_KALMAN_HPP`; `namespace
       radar`; include `<Eigen/Dense>`, `radar/types.hpp`.
-- [ ] `src/kalman.cpp`: implement. `predict` reuses `motion::cv_transition_matrix` (ADR-0006).
+- [x] `src/kalman.cpp`: implement. `predict` reuses `motion::cv_transition_matrix` (ADR-0006).
       `update` is Joseph form + `linalg::symmetrize`. `gate_distance`/gain use `S.inverse()`
       with an SPD guard. Validate inputs → `throw std::invalid_argument`.
 
 ## T2 — Build wiring
-- [ ] Add `kalman.cpp` to the `radar` library in `src/CMakeLists.txt`.
-- [ ] Register `test_kalman` in `tests/CMakeLists.txt` via `radar_add_test`.
+- [x] Add `kalman.cpp` to the `radar` library in `src/CMakeLists.txt`.
+- [x] Register `test_kalman` in `tests/CMakeLists.txt` via `radar_add_test`.
 
 ## T3 — Tests (careful; issue #6 is the headline)
-- [ ] Model matrices vs **literal** spec (`process_noise`, `H`, `R`).
-- [ ] **Predict with hand-computed values, NOT via `cv_transition_matrix`** (issue #6).
-- [ ] `initiate_track` exact `x̂`, `P₀`.
-- [ ] `innovation` / `innovation_covariance` / `gate_distance` (zero-y, `S=σ²I`, worked 2×2).
-- [ ] Joseph update: `y=0` fixes `x` + shrinks `P`; posterior symmetric + PSD; trace drops;
+- [x] Model matrices vs **literal** spec (`process_noise`, `H`, `R`).
+- [x] **Predict with hand-computed values, NOT via `cv_transition_matrix`** (issue #6).
+- [x] `initiate_track` exact `x̂`, `P₀`.
+- [x] `innovation` / `innovation_covariance` / `gate_distance` (zero-y, `S=σ²I`, worked 2×2).
+- [x] Joseph update: `y=0` fixes `x` + shrinks `P`; posterior symmetric + PSD; trace drops;
       matches `(I−KH)P` on a benign case.
-- [ ] Convergence smoke (AC-6): CV truth + sensor, error < raw noise in a few scans (fixed seed).
-- [ ] Validation `EXPECT_THROW` (bad `dt`/`σ_a`/`σ_m`/measurement).
+- [x] Convergence smoke (AC-6): CV truth + sensor, error < raw noise in a few scans (fixed seed).
+- [x] Validation `EXPECT_THROW` (bad `dt`/`σ_a`/`σ_m`/measurement).
 
 ## T4 — Verify — ALL PASS
 - [x] `release` → `ctest`; `ci` + `ci-clang` 0 warnings in our code, **50/50**; `asan` **52/52**;
@@ -59,7 +62,7 @@ All mutation-verified (the cited bug now fails the matching test):
   the single `clang-analyzer-security.ArrayBound` check (false positive in Eigen's blocked GEMM
   reached via `llt.solve`, with documented rationale).
 - Verified: `ci`/`ci-clang` 54/54, `asan` 56/56, clang-format clean; all four mutations fail.
-- [ ] Single clean commit, push, open PR (reference issue #6); CI gates.
+- [x] Single clean commit, push, open PR (reference issue #6); CI gated it. **Merged (PR #11.)**
 
 ## Exit criteria
 All ACs in `requirements.md` met; `kalman.{hpp,cpp}` + `test_kalman.cpp` committed. This

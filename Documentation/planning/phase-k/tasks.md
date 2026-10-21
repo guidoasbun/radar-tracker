@@ -1,5 +1,7 @@
 # Phase K · Exhaustive Kalman verification battery — Tasks
 
+> **Status: ✅ complete — merged (PR #12), after three review rounds (see T7).**
+
 ## T1 — Branch + planning docs
 - [x] Branch `phase-k` off `main`.
 - [x] `requirements.md` — acceptance battery (AC-K1..K7), honest scope, MC config.
@@ -55,6 +57,7 @@ Verified against the real `test_phase_k` (release build), not a probe:
 ## T6 — Ship
 - [x] Single clean commit on `phase-k`; push (sets upstream).
 - [x] Open PR #12; gated by the 4 required checks (gcc, clang, asan, gitleaks) — all green.
+      **Merged to `main` as 1e198fd** after the three review rounds in T7.
 
 ## T7 — PR #12 review rounds (addressed, each reverified green)
 Round 1 (9 findings) — NEES LLT guard, per-sample finite/≥0 (NaN-safe), `<limits>`,

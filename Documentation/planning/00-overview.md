@@ -32,8 +32,8 @@ the filter is the keystone the entire project depends on.
 | Phase | Name | Spec milestone | Gate (one-line definition of done) | Status |
 | --- | --- | --- | --- | --- |
 | 0 | Scaffold & toolchain | pre-M1 | Clean clone configures + builds + tests pass under all presets; two review rounds addressed | ✅ done (PR #2) |
-| M1 | Single target | M1 (v0.1) | `single.json` runs; track RMSE ≤ 0.5 × raw RMSE; plot in README; CI green | NEXT |
-| K | Kalman verification | within M1 | Full six-group filter verification battery passes (see phase-K docs) | planned |
+| M1 | Single target | M1 (v0.1) | `single.json` runs; track RMSE ≤ 0.5 × raw RMSE; plot in README; CI green | 🔶 in progress (types/motion/sensor/kalman + Phase K done; `io`/`metrics`/`apps` remain) |
+| K | Kalman verification | within M1 | Statistical filter-verification battery passes: NIS (×2), NEES, covariance credibility, convergence — 5 GoogleTest cases in the CI gate (see phase-k docs) | ✅ done (PR #12) |
 | M2 | Multi-target + clutter | M2 (v0.2) | baseline clears all thresholds; crossing keeps identities; dense_clutter ≤ 1 false track | planned |
 | M3 | Two services over UDP | M3 (v0.3) | `docker compose up` leaves metrics.json; UDP tracks match in-process on same seed | planned |
 | M4 | Live display (optional) | M4 (v0.4) | 60 fps with 10 tracks + λ=20; demo GIF in README | planned |
@@ -43,15 +43,15 @@ the filter is the keystone the entire project depends on.
 Phase K's statistical/Monte-Carlo tests need the CV motion model and a Gaussian
 sensor to generate data, so the M1 module order is:
 
-1. `types` — shared structs
-2. `motion` (CV) — truth propagation
-3. `sensor` (noise only; P_D=1, no clutter) — enough to feed Monte-Carlo tests
-4. `kalman` — predict, Joseph-form update, innovation, S, gate distance
-5. **Phase K** — exhaustive filter verification battery (gate before building upward)
-6. `io` (config + csv) — load scenario, write CSVs
-7. `metrics` (RMSE only) — raw vs track error
-8. `apps/radar_sim` — wire it together, run end-to-end, print RMSE
-9. `tools/plot.py` + README figure
+1. `types` — shared structs — ✅ done (PR #3)
+2. `motion` (CV) — truth propagation — ✅ done (PR #4)
+3. `sensor` (noise only; P_D=1, no clutter) — enough to feed Monte-Carlo tests — ✅ done (PR #10)
+4. `kalman` — predict, Joseph-form update, innovation, S, gate distance — ✅ done (PR #11)
+5. **Phase K** — exhaustive filter verification battery (gate before building upward) — ✅ done (PR #12)
+6. `io` (config + csv) — load scenario, write CSVs — ⬜ next
+7. `metrics` (RMSE only) — raw vs track error — ⬜
+8. `apps/radar_sim` — wire it together, run end-to-end, print RMSE — ⬜ (first runnable app)
+9. `tools/plot.py` + README figure — ⬜
 10. `.github/workflows/ci.yml` — build + test on push — ✅ **done, pulled forward** (after
     `types`/`motion`; see `planning/phase-ci/`). Rationale: CI guards *future* commits, so it
     is most valuable early; two PR reviews (PR #4 L5/N2) flagged that every result rested on

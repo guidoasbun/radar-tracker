@@ -1,5 +1,7 @@
 # M1 · `types` module — Tasks
 
+> **Status: ✅ complete — merged (PR #3).**
+
 Ordered checklist; doubles as the execution record. Check off as completed.
 
 ## T1 — Header
