@@ -56,7 +56,33 @@
       — `nlohmann/json` is now actually used by `io` (CLI11 still staged for `apps/*`).
 
 ## T9 — Ship
-- [ ] Single clean commit on `m1-io`; push; open PR; 4 required checks green.
+- [x] Single clean commit on `m1-io`; push; open PR #14; 4 required checks green.
+
+## T10 — PR #14 review (9 findings, addressed; each reverified green)
+- [x] #1 integers read as `int64` + range-checked before narrowing (`id`, tracker ints) —
+      `4294967297` no longer wraps to `1`. Test: `RejectsOutOfRangeInteger`.
+- [x] #2 `seed` reads the full unsigned range (`get<uint64>` when `is_number_unsigned`) —
+      `18446744073709551615` accepted. Test: `AcceptsFullRangeUnsignedSeed`.
+- [x] #3 wrong-typed `sensor`/`tracker` block rejected via `optional_object()`. Test:
+      `RejectsWrongTypedSensorOrTrackerBlock`.
+- [x] #4 range checks: `p_detect∈[0,1]`, `clutter_per_scan≥0`, `gate_chi2>0`,
+      `1≤confirm_m≤confirm_n`, `delete_after_misses≥1`. Tests: `RejectsOutOfRange…` +
+      `AcceptsInRange…`.
+- [x] #5 + #6 CSV rewritten on `std::to_chars` for **all** numeric fields (locale-independent
+      incl. integers; no per-field `imbue` churn). Test: `IntegerColumnsAreLocaleIndependent`.
+- [x] #7 error paths have no leading dot for top-level keys; non-object root names `<root>`.
+      Tests: `TopLevelErrorPathHasNoLeadingDot`, `NonObjectRootNamesRoot`.
+- [x] #8 `load_scenario` rejects a directory up front (`std::filesystem::is_directory`) with
+      "is a directory", not a misleading "invalid JSON" (a dir read leaves no stream error on
+      Linux — verified). Test: `DirectoryPathReportsReadError`.
+- [x] #9 negative-id check + message reference `radar::kClutterOrigin`.
+- [x] clang-tidy: scoped NOLINTs for the `std::to_chars` pointer-arithmetic idiom and the
+      swappable message/row params; test multi-case blocks refactored through an
+      `expect_config_error` helper to stay under the cognitive-complexity threshold.
+- [x] UBSan: libstdc++ `<charconv>` added to `cmake/sanitizer-ignorelist.txt` — `to_chars`
+      on a negative `int` (origin_id −1) converts to unsigned internally (correct, flagged by
+      implicit-conversion); same third-party-false-positive treatment as the Eigen entry.
+- [x] Re-verified: `release`/`ci`/`ci-clang` 87/87, `asan` 89/89, `clang-format` clean.
 
 ## Exit criteria
 All ACs in `requirements.md` met; `io/{config,csv}.{hpp,cpp}` + `test_io.cpp` +

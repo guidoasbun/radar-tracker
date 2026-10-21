@@ -57,19 +57,32 @@ file's values exactly (checked against literals): `dt_s`, `duration_s`, `seed`,
 `id`/`x0`/`y0`/`vx0`/`vy0`.
 
 ### AC-2 — Issue #5 validation (fail loudly at the boundary)
-All of the following throw `radar::ConfigError` with a message naming the offending field,
-and are each covered by a test (`EXPECT_THROW`), so they run in every build:
+All of the following throw `radar::ConfigError` with a message naming the offending field
+(no leading dot for a top-level key; `<root>` for a non-object root), and are each covered
+by a test (`EXPECT_THROW`), so they run in every build:
 
-- Non-finite (`NaN`/`inf`) or **non-positive** `dt_s`. (`1e400` parses to `inf`; some JSON
-  accepts `NaN`.)
+- Non-finite (`NaN`/`inf`) or **non-positive** `dt_s`. (nlohmann rejects `NaN`/`Infinity`
+  tokens and overflowing literals like `1e400` at parse time; the field-level `isfinite`
+  guard is documented defense-in-depth.)
 - Non-finite `duration_s` or `area_half_width_m`; non-positive `duration_s`.
 - Non-finite target initial state (any of `x0`, `y0`, `vx0`, `vy0`).
 - Non-finite or **negative** `sensor.sigma_m` (a negative/NaN σ_m would otherwise disable
   noise — a silent "perfect sensor").
-- **Negative** target `id` (`id = −1` collides with `kClutterOrigin`, scoring a real target
-  as clutter).
+- **Negative** target `id` (`id = −1` collides with `radar::kClutterOrigin`, scoring a real
+  target as clutter — the check references the named constant).
 - **Duplicate** target ids (origin must uniquely identify a target for scoring).
 - A non-empty `maneuvers` list on any target (CT deferred to M2).
+- **(PR #14 review) An integer outside the 32-bit `int` range** — read as `int64` and
+  range-checked before narrowing, so e.g. `"id": 4294967297` is rejected rather than
+  silently wrapping to `1`.
+- **(PR #14 review) A present-but-wrong-typed `sensor`/`tracker` block** (`0`, `"x"`,
+  `[ … ]`) — rejected, not silently replaced by defaults.
+- **(PR #14 review) Out-of-range M2 values** carried for later use: `sensor.p_detect` ∉
+  [0, 1], `sensor.clutter_per_scan` < 0, `tracker.gate_chi2` ≤ 0, `confirm_m` not in
+  `1 ≤ confirm_m ≤ confirm_n`, `delete_after_misses` < 1.
+
+A full-range unsigned `seed` (up to 2⁶⁴−1) is **accepted** (`ScenarioConfig::seed` is
+`uint64`), not misread as negative.
 
 ### AC-3 — Malformed / missing input is a clear ConfigError, not a crash
 - A missing file, invalid JSON syntax, a missing required key, or a wrong JSON type for a
@@ -79,9 +92,12 @@ and are each covered by a test (`EXPECT_THROW`), so they run in every build:
 ### AC-4 — CSV writers produce the exact spec format
 - `write_truth` emits the header `t_s,target_id,x_m,y_m,vx_mps,vy_mps` then one row per
   target per scan; `write_meas` emits `t_s,meas_id,x_m,y_m,origin_id`.
-- Columns are comma-separated, SI units, with deterministic fixed-precision formatting
-  (locale-independent — a `.` decimal point regardless of the host locale). Verified by
-  writing to an in-memory stream and comparing the exact text against a literal.
+- Columns are comma-separated, SI units, with deterministic fixed-precision formatting.
+  **Every numeric field — integers included — is written with `std::to_chars`**, which is
+  locale-independent by construction (a `.` decimal point, never a thousands separator),
+  so an id like `1000` can never print as `1,000` and split a column even if the app imbues
+  or sets a global locale. Verified by writing to an in-memory stream (including under an
+  `en_US.UTF-8` locale) and comparing the exact text against a literal.
 - Round-trip sanity: a value written and re-parsed as a double recovers it to tolerance
   (guards the formatting precision).
 

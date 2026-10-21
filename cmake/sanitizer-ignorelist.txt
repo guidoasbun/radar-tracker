@@ -7,13 +7,23 @@
 # such third-party false positives with a *scoped ignorelist* rather than dropping the
 # implicit-conversion check wholesale — this file is that ignorelist.
 #
+# libstdc++'s <charconv> std::to_chars(int) converts a negative value to its unsigned
+# magnitude internally (charconv:~329), which UBSan's implicit-conversion check flags as a
+# signed->unsigned value change. That is correct, intentional library behaviour, hit by the
+# io CSV writer formatting a negative origin_id (the clutter tag -1); not a bug in radar
+# code. Same third-party-false-positive treatment as Eigen above — our code stays
+# instrumented. (The asan preset uses Clang with the system libstdc++ headers, so the path
+# is the toolchain's c++/<ver>/charconv.)
+#
 # This file is registered as a CMAKE_CONFIGURE_DEPENDS in the top-level CMakeLists, so
 # editing it forces a re-configure and rebuild — a stale asan build cannot silently keep
 # a removed suppression or miss an added one.
 #
 # Format: https://clang.llvm.org/docs/SanitizerSpecialCaseList.html
-# Match Eigen source by path substring (src: uses the file name/path, wildcards allowed).
+# Match source by path substring (src: uses the file name/path, wildcards allowed).
 
 [implicit-conversion]
 src:*/_deps/eigen3-src/*
 src:*/Eigen/*
+src:*/include/c++/*/charconv
+src:*/bits/charconv.h

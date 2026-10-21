@@ -97,10 +97,19 @@ void write_meas_row(std::ostream&, double t_s, int meas_id,
 
 - **Stream-based CSV writers, free functions.** Writers take an `std::ostream&` so the same
   code serves a file (`radar_sim`) and an `ostringstream` (tests), and there is no hidden
-  file handling in the formatting path. Fixed precision via a locally-set stream format
-  (not the global locale) so output is byte-identical across hosts — a `.` decimal point
-  regardless of `LC_NUMERIC`. The writers take `types` values (`Eigen::Vector4d` truth state,
-  `Eigen::Vector2d` measurement position) so the app layer passes module outputs straight in.
+  file handling in the formatting path. **Every numeric field — doubles and integers — is
+  formatted with `std::to_chars`** (`chars_format::fixed` for doubles), which is
+  locale-independent by construction and allocation-free: output is byte-identical across
+  hosts (a `.` decimal point, no thousands separator) *regardless of any imbued or global
+  locale*, and there is no per-field locale `imbue`/restore. (PR #14 review: an earlier
+  draft forced only the doubles to the classic locale via a local `imbue`, which left the
+  integer columns at the mercy of the stream locale — `1000` could print `1,000` and split a
+  column — and churned the locale once per field.) The writers take `types` values
+  (`Eigen::Vector4d` truth state, `Eigen::Vector2d` measurement position) so the app layer
+  passes module outputs straight in. One consequence: `to_chars` on a negative `int`
+  (`origin_id = −1`) converts to its unsigned magnitude inside libstdc++'s `<charconv>`,
+  which UBSan's implicit-conversion check flags — handled as a third-party false positive in
+  `cmake/sanitizer-ignorelist.txt`, exactly like the Eigen SSE entry.
 
 - **No readers in M1 (deferred, documented).** `radar_score`/`metrics` are the only readers,
   and `tracks.csv` needs the tracker (M2). Adding a reader now would be untested surface with
@@ -143,7 +152,7 @@ reason `io` exists as the untrusted-input gate.
 | --- | --- |
 | A leaked `nlohmann::json::exception` reaches `main` as an opaque crash | catch at the `parse_scenario` boundary, rethrow `ConfigError` with the source name; tested (AC-3). |
 | `1e400`→`inf`, `NaN` literals slip through | explicit `std::isfinite` on every numeric field; tested (AC-2). |
-| Locale makes CSV use `,` as the decimal point → corrupt columns | writers set the stream's classic locale / fixed precision locally; test asserts the exact `.`-formatted text (AC-4). |
+| Locale makes CSV use `,` as the decimal point or a thousands separator → corrupt columns | all numeric fields written with `std::to_chars` (locale-independent by construction, integers included); test asserts the exact `.`-formatted text under an `en_US` locale (AC-4). |
 | json headers trip our `-Werror`/clang-tidy | consumed `SYSTEM`; included only in `.cpp`, never the public header. |
 | Duplicate/negative ids silently mis-score later | rejected at load with a named error (AC-2), mirroring the sensor's runtime guard (issue #5). |
 

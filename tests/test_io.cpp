@@ -12,7 +12,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <locale>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 
 #include "radar/io/config.hpp"
@@ -34,6 +36,14 @@ const char* const kValidScenario = R"({
     { "id": 1, "x0": -15000, "y0": -12000, "vx0": 250, "vy0": 180, "maneuvers": [] }
   ]
 })";
+
+// Assert a scenario string is rejected with ConfigError. A single-statement helper keeps
+// the multi-case tests below flat (no EXPECT_THROW-in-loop, which clang-tidy scores as high
+// cognitive complexity) while still reporting which case failed via the SCOPED_TRACE.
+void expect_config_error(const char* json_text) {
+  SCOPED_TRACE(json_text);
+  EXPECT_THROW((void)radar::parse_scenario(json_text, "s"), radar::ConfigError);
+}
 
 }  // namespace
 
@@ -246,7 +256,8 @@ TEST(IoCsv, ValuesRoundTripToTolerance) {
 }
 
 TEST(IoCsv, WriterRestoresStreamState) {
-  // put_fixed must not leave the stream in fixed/precision mode for later output.
+  // The writers use std::to_chars + os.write and never touch the stream's format flags,
+  // so a caller's formatting state is untouched after a row.
   std::ostringstream os;
   os << std::scientific;
   const auto flags_before = os.flags();
@@ -263,4 +274,113 @@ TEST(IoConfig, SingleScenarioFileLoads) {
   ASSERT_EQ(c.targets.size(), 1U);
   EXPECT_EQ(c.targets[0].id, 1);
   EXPECT_TRUE(c.targets[0].maneuvers.empty());
+}
+
+// ---- PR #14 review follow-up -----------------------------------------------
+
+// #1 — integers out of int range are rejected, not silently wrapped.
+TEST(IoConfig, RejectsOutOfRangeInteger) {
+  // 4294967297 would wrap to 1 with a bare get<int>(); 2147483648 would become INT_MIN.
+  EXPECT_THROW(
+      (void)radar::parse_scenario(
+          R"({ "dt_s": 0.1, "targets": [ { "id": 4294967297, "x0": 0, "y0": 0, "vx0": 0, "vy0": 0 } ] })",
+          "s"),
+      radar::ConfigError);
+  EXPECT_THROW(
+      (void)radar::parse_scenario(
+          R"({ "dt_s": 0.1, "tracker": { "confirm_m": 2147483648 }, "targets": [ { "id": 0, "x0": 0, "y0": 0, "vx0": 0, "vy0": 0 } ] })",
+          "s"),
+      radar::ConfigError);
+}
+
+// #2 — a full-range uint64 seed is accepted (not misread as negative).
+TEST(IoConfig, AcceptsFullRangeUnsignedSeed) {
+  const radar::ScenarioConfig c = radar::parse_scenario(
+      R"({ "dt_s": 0.1, "seed": 18446744073709551615, "targets": [ { "id": 0, "x0": 0, "y0": 0, "vx0": 0, "vy0": 0 } ] })",
+      "s");
+  EXPECT_EQ(c.seed, 18446744073709551615ULL);
+}
+
+// #3 — a present-but-wrong-typed sensor/tracker block is rejected, not ignored.
+TEST(IoConfig, RejectsWrongTypedSensorOrTrackerBlock) {
+  expect_config_error(
+      R"({ "dt_s": 0.1, "sensor": 0, "targets": [ { "id": 0, "x0": 0, "y0": 0, "vx0": 0, "vy0": 0 } ] })");
+  expect_config_error(
+      R"({ "dt_s": 0.1, "sensor": "x", "targets": [ { "id": 0, "x0": 0, "y0": 0, "vx0": 0, "vy0": 0 } ] })");
+  expect_config_error(
+      R"({ "dt_s": 0.1, "sensor": [ { "sigma_m": 5 } ], "targets": [ { "id": 0, "x0": 0, "y0": 0, "vx0": 0, "vy0": 0 } ] })");
+  expect_config_error(
+      R"({ "dt_s": 0.1, "tracker": 7, "targets": [ { "id": 0, "x0": 0, "y0": 0, "vx0": 0, "vy0": 0 } ] })");
+}
+
+// #4 — out-of-range sensor/tracker values are rejected at load.
+TEST(IoConfig, RejectsOutOfRangeSensorTrackerValues) {
+  expect_config_error(
+      R"({ "dt_s": 0.1, "sensor": { "p_detect": 1.7 }, "targets": [ { "id": 0, "x0": 0, "y0": 0, "vx0": 0, "vy0": 0 } ] })");
+  expect_config_error(
+      R"({ "dt_s": 0.1, "sensor": { "clutter_per_scan": -3 }, "targets": [ { "id": 0, "x0": 0, "y0": 0, "vx0": 0, "vy0": 0 } ] })");
+  expect_config_error(
+      R"({ "dt_s": 0.1, "tracker": { "gate_chi2": -1 }, "targets": [ { "id": 0, "x0": 0, "y0": 0, "vx0": 0, "vy0": 0 } ] })");
+  expect_config_error(
+      R"({ "dt_s": 0.1, "tracker": { "confirm_m": 6, "confirm_n": 5 }, "targets": [ { "id": 0, "x0": 0, "y0": 0, "vx0": 0, "vy0": 0 } ] })");
+  expect_config_error(
+      R"({ "dt_s": 0.1, "tracker": { "delete_after_misses": 0 }, "targets": [ { "id": 0, "x0": 0, "y0": 0, "vx0": 0, "vy0": 0 } ] })");
+}
+
+// A well-formed scenario with valid in-range M2 values still loads.
+TEST(IoConfig, AcceptsInRangeSensorTrackerValues) {
+  const radar::ScenarioConfig c = radar::parse_scenario(
+      R"({ "dt_s": 0.1, "sensor": { "p_detect": 0.9, "clutter_per_scan": 2.0 }, "tracker": { "gate_chi2": 9.21, "confirm_m": 3, "confirm_n": 5, "delete_after_misses": 5 }, "targets": [ { "id": 0, "x0": 0, "y0": 0, "vx0": 0, "vy0": 0 } ] })",
+      "s");
+  EXPECT_DOUBLE_EQ(c.sensor.p_detect, 0.9);
+  EXPECT_EQ(c.tracker.confirm_m, 3);
+}
+
+// #5 — integer CSV columns are locale-independent: even with a thousands-separating
+// global locale imbued on the stream, an id like 1000 stays "1000", not "1,000".
+TEST(IoCsv, IntegerColumnsAreLocaleIndependent) {
+  std::ostringstream os;
+  try {
+    os.imbue(std::locale("en_US.UTF-8"));  // groups thousands as 1,000 for iostreams
+  } catch (const std::runtime_error&) {
+    GTEST_SKIP() << "en_US.UTF-8 locale not available on this host";
+  }
+  radar::write_meas_row(os, 1.0, 1000, Eigen::Vector2d{1000.0, 2000.0}, 1000);
+  // to_chars ignores the locale entirely: ids and values print without separators.
+  EXPECT_EQ(os.str(), "1.000,1000,1000.000000,2000.000000,1000\n");
+}
+
+// #7 — a top-level missing key names the key with NO leading dot.
+TEST(IoConfig, TopLevelErrorPathHasNoLeadingDot) {
+  try {
+    (void)radar::parse_scenario(R"({ "targets": [] })", "s");
+    FAIL() << "expected ConfigError";
+  } catch (const radar::ConfigError& e) {
+    const std::string msg = e.what();
+    EXPECT_NE(msg.find("dt_s"), std::string::npos) << msg;
+    EXPECT_EQ(msg.find(": ."), std::string::npos) << "path should not start with a dot: " << msg;
+  }
+}
+
+// #7 — a non-object root names <root>, not an empty path.
+TEST(IoConfig, NonObjectRootNamesRoot) {
+  try {
+    (void)radar::parse_scenario("[1, 2, 3]", "s");
+    FAIL() << "expected ConfigError";
+  } catch (const radar::ConfigError& e) {
+    EXPECT_NE(std::string(e.what()).find("<root>"), std::string::npos) << e.what();
+  }
+}
+
+// #8 — a directory path reports "is a directory", not "invalid JSON".
+TEST(IoConfig, DirectoryPathReportsReadError) {
+  const std::filesystem::path dir = RADAR_SCENARIOS_DIR;  // the scenarios/ directory itself
+  try {
+    (void)radar::load_scenario(dir);
+    FAIL() << "expected ConfigError";
+  } catch (const radar::ConfigError& e) {
+    const std::string msg = e.what();
+    EXPECT_NE(msg.find("directory"), std::string::npos) << msg;
+    EXPECT_EQ(msg.find("invalid JSON"), std::string::npos) << "should not blame JSON: " << msg;
+  }
 }
