@@ -32,7 +32,7 @@ constexpr int kValuePrecision = 6;
 // ec == value_too_large (and leaves the buffer unspecified) if it does not fit, so a
 // too-small buffer would otherwise write garbage silently — sizing for the worst case
 // plus checking ec (below) closes that (PR #14 re-review). 1.79e308 at 6 dp is ~316
-// chars; 400 is comfortable headroom.
+// chars; max_exponent10 (308) + 64 = 372 bytes is comfortable headroom.
 constexpr std::size_t kDoubleBufSize =
     static_cast<std::size_t>(std::numeric_limits<double>::max_exponent10) + 64;
 
