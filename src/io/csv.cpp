@@ -2,7 +2,9 @@
 
 #include <array>
 #include <charconv>
+#include <limits>
 #include <ostream>
+#include <stdexcept>
 #include <system_error>
 
 #include "radar/types.hpp"  // state-vector indices kPx..kVy
@@ -14,9 +16,8 @@
 // free. This fixes two things over an iostream approach: (1) integer columns no longer
 // depend on the stream's imbued locale — an id like 1000 can never print as "1,000" and
 // split a column, even if the app calls std::locale::global; (2) there is no per-field
-// imbue/restore of the stream locale (which copies the locale and fires callbacks every
-// call). Time uses 3 decimals (ms at a 0.1 s scan); positions/velocities use 6 decimals
-// (sub-micron), enough to round-trip a scenario's values faithfully.
+// imbue/restore of the stream locale. Time uses 3 decimals (ms at a 0.1 s scan);
+// positions/velocities use 6 decimals (sub-micron), enough to round-trip faithfully.
 
 namespace radar {
 
@@ -25,25 +26,43 @@ namespace {
 constexpr int kTimePrecision = 3;
 constexpr int kValuePrecision = 6;
 
-// A to_chars buffer: 64 chars is ample for a fixed-notation double or any 32-bit int.
-// The data()/data()+size() and (r.ptr - data()) forms are the canonical std::to_chars
-// API; the pointer arithmetic is bounded by the fixed-size std::array and unavoidable here.
+// Worst-case width of a fixed-notation double: a sign, the integer part (up to
+// max_exponent10 + 1 digits for the largest finite magnitude, ~309), the '.', the
+// fractional digits (precision), and slack for a terminator. std::to_chars returns
+// ec == value_too_large (and leaves the buffer unspecified) if it does not fit, so a
+// too-small buffer would otherwise write garbage silently — sizing for the worst case
+// plus checking ec (below) closes that (PR #14 re-review). 1.79e308 at 6 dp is ~316
+// chars; 400 is comfortable headroom.
+constexpr std::size_t kDoubleBufSize =
+    static_cast<std::size_t>(std::numeric_limits<double>::max_exponent10) + 64;
+
+// A to_chars buffer. The data()/data()+size() and (r.ptr - data()) forms are the
+// canonical std::to_chars API; the pointer arithmetic is bounded by the fixed-size
+// std::array.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void put_double(std::ostream& os, double value, int precision) {
-  std::array<char, 64> buf{};
+  std::array<char, kDoubleBufSize> buf{};
   // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
   const std::to_chars_result r = std::to_chars(buf.data(), buf.data() + buf.size(), value,
                                                std::chars_format::fixed, precision);
-  // to_chars only fails (ec == value_too_large) if the buffer is too small; 64 chars is
-  // always enough for fixed notation at these precisions, so this never trips in practice.
+  if (r.ec != std::errc{}) {
+    // Only happens if the buffer is too small, which kDoubleBufSize rules out for any
+    // finite double; throwing (rather than writing an unspecified buffer) guarantees a
+    // loud failure instead of silently corrupt CSV if this invariant is ever broken.
+    throw std::range_error("radar::io: could not format a double for CSV (value too large)");
+  }
   // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
   os.write(buf.data(), r.ptr - buf.data());
 }
 
 void put_int(std::ostream& os, int value) {
+  // 16 chars holds any 32-bit int ("-2147483648" is 11); sized generously.
   std::array<char, 16> buf{};
   // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
   const std::to_chars_result r = std::to_chars(buf.data(), buf.data() + buf.size(), value);
+  if (r.ec != std::errc{}) {
+    throw std::range_error("radar::io: could not format an integer for CSV");
+  }
   // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
   os.write(buf.data(), r.ptr - buf.data());
 }

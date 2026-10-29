@@ -152,7 +152,9 @@ reason `io` exists as the untrusted-input gate.
 | --- | --- |
 | A leaked `nlohmann::json::exception` reaches `main` as an opaque crash | catch at the `parse_scenario` boundary, rethrow `ConfigError` with the source name; tested (AC-3). |
 | `1e400`→`inf`, `NaN` literals slip through | explicit `std::isfinite` on every numeric field; tested (AC-2). |
-| Locale makes CSV use `,` as the decimal point or a thousands separator → corrupt columns | all numeric fields written with `std::to_chars` (locale-independent by construction, integers included); test asserts the exact `.`-formatted text under an `en_US` locale (AC-4). |
+| Locale makes CSV use `,` as the decimal point or a thousands separator → corrupt columns | all numeric fields written with `std::to_chars` (locale-independent by construction, integers included); test imbues a custom thousands-grouping `numpunct` facet (no installed locale needed, so it always runs on CI) and asserts the exact `.`-formatted text (AC-4). |
+| A large finite double overflows the `to_chars` buffer → silently truncated/garbage CSV | buffer sized for the worst-case fixed-notation magnitude (`max_exponent10` + slack); `to_chars`'s `ec` is checked and a `std::range_error` thrown rather than writing an unspecified buffer (PR #14 re-review); tested with `1e60` (`LargeFiniteDoubleWritesInFull`). |
+| An unsigned JSON integer above `INT64_MAX` wraps negative in `req_int` | `req_int` reads `is_number_unsigned` values as `uint64` and compares against `INT_MAX` before narrowing (mirrors the seed path), so a huge id is rejected as "out of range", not mislabeled a clutter id (PR #14 re-review); tested (`RejectsHugeUnsignedIntegerWithCorrectMessage`). |
 | json headers trip our `-Werror`/clang-tidy | consumed `SYSTEM`; included only in `.cpp`, never the public header. |
 | Duplicate/negative ids silently mis-score later | rejected at load with a named error (AC-2), mirroring the sensor's runtime guard (issue #5). |
 

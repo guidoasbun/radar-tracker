@@ -87,15 +87,25 @@ using nlohmann::json;
   return req_finite(obj, key, source, path);
 }
 
-// A JSON integer that fits in `int`. Reads as int64 and range-checks BEFORE narrowing, so
-// a value like 4294967297 ("id") is rejected rather than silently wrapping to 1, and
-// 2147483648 does not become INT_MIN (review #1).
+// A JSON integer that fits in `int`. Range-checks BEFORE narrowing so a too-large value is
+// rejected rather than silently wrapped. nlohmann stores an integer above INT64_MAX as
+// number_unsigned, where get<int64_t>() would cast it negative (e.g. 18446744073709551615
+// -> -1, which then sneaks past an int-range check with a misleading message); so unsigned
+// values are read as uint64_t and compared against INT_MAX directly (PR #14 re-review #2),
+// mirroring the seed path.
 [[nodiscard]] int req_int(const json& obj, const char* key, std::string_view source,
                           std::string_view path) {
   const json& v = require(obj, key, source, path);
   const std::string field = join_path(path, key);
   if (!v.is_number_integer()) {
     throw ConfigError(at(source, field) + " must be an integer");
+  }
+  if (v.is_number_unsigned()) {
+    const std::uint64_t u = v.get<std::uint64_t>();
+    if (u > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+      throw ConfigError(at(source, field) + " is out of range for a 32-bit integer");
+    }
+    return static_cast<int>(u);
   }
   const std::int64_t n = v.get<std::int64_t>();
   if (n < std::numeric_limits<int>::min() || n > std::numeric_limits<int>::max()) {

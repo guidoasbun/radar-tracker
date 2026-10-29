@@ -84,6 +84,25 @@
       implicit-conversion); same third-party-false-positive treatment as the Eigen entry.
 - [x] Re-verified: `release`/`ci`/`ci-clang` 87/87, `asan` 89/89, `clang-format` clean.
 
+## T11 — PR #14 re-review of `92df1cf` (3 findings; addressed)
+- [x] **(blocking) `put_double` buffer too small.** The 64-char buffer held fixed-notation
+      doubles only to ~1e56; `to_chars` returns `value_too_large` above that and the code
+      wrote 64 unspecified bytes (config only requires *finite*, so `x0 = 1e60` reaches it).
+      Fix: buffer sized `max_exponent10 + 64`; `r.ec` checked → `std::range_error` on failure.
+      Test: `LargeFiniteDoubleWritesInFull` (1e60 round-trips, no NUL). Probe-confirmed the
+      old overflow (ec=75 at ≥1e57).
+- [x] **(should-fix) `req_int` wrapped huge unsigned.** `get<int64_t>()` on a
+      `number_unsigned` > INT64_MAX cast negative (`18446744073709551615` → −1), passing the
+      int-range check and getting the wrong "clutter tag" message. Fix: read
+      `is_number_unsigned` as `uint64` and compare to `INT_MAX`. Test:
+      `RejectsHugeUnsignedIntegerWithCorrectMessage` ("out of range", not "clutter").
+- [x] **(minor) locale test could silently skip.** `IntegerColumnsAreLocaleIndependent`
+      used `en_US.UTF-8` and `GTEST_SKIP`'d when absent, so CI couldn't prove #5 ran. Rewrote
+      with an in-process thousands-grouping `numpunct` facet (no installed locale), asserting
+      the facet groups an iostream (`1,000`) while `to_chars` does not (`1000`). No skip path.
+- [x] Re-verified: `release` 30/30 io; `ci`/`ci-clang` 89/89; `asan` 91/91; `clang-format`
+      clean. Docs (design risk table) updated.
+
 ## Exit criteria
 All ACs in `requirements.md` met; `io/{config,csv}.{hpp,cpp}` + `test_io.cpp` +
 `scenarios/single.json` committed and green across all presets; ADR-0007 recorded; docs

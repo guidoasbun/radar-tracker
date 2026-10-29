@@ -265,6 +265,27 @@ TEST(IoCsv, WriterRestoresStreamState) {
   EXPECT_EQ(os.flags(), flags_before);
 }
 
+// (re-review) A large finite double must be written in full, not as a truncated/garbage
+// field from a too-small to_chars buffer. The config only requires finiteness, so a target
+// at x0 = 1e60 (or a big velocity integrated over a run) reaches this path. 1.79e308 at 6
+// decimals is ~316 chars; the writer's buffer is sized for the worst case, so it formats
+// cleanly and the value round-trips.
+TEST(IoCsv, LargeFiniteDoubleWritesInFull) {
+  std::ostringstream os;
+  const double big = 1.0e60;
+  radar::write_truth_row(os, 0.0, 0, Eigen::Vector4d{big, -big, 0.0, 0.0});
+  const std::string row = os.str();
+  // x_m is the 3rd column (after t_s, target_id). Parse it back and check it round-trips.
+  const std::size_t c1 = row.find(',');
+  const std::size_t c2 = row.find(',', c1 + 1);
+  const std::size_t c3 = row.find(',', c2 + 1);
+  const std::string x_field = row.substr(c2 + 1, c3 - c2 - 1);
+  EXPECT_GT(x_field.size(), 60U) << "fixed-notation 1e60 should be a long field: " << x_field;
+  EXPECT_NEAR(std::stod(x_field), big, big * 1e-9);
+  // No embedded NUL or stray bytes from an unspecified buffer.
+  EXPECT_EQ(row.find('\0'), std::string::npos);
+}
+
 // ---- AC — the shipped scenarios/single.json loads and validates -------------
 
 TEST(IoConfig, SingleScenarioFileLoads) {
@@ -291,6 +312,24 @@ TEST(IoConfig, RejectsOutOfRangeInteger) {
           R"({ "dt_s": 0.1, "tracker": { "confirm_m": 2147483648 }, "targets": [ { "id": 0, "x0": 0, "y0": 0, "vx0": 0, "vy0": 0 } ] })",
           "s"),
       radar::ConfigError);
+}
+
+// #1 (re-review) — an unsigned integer above INT64_MAX must be rejected as out-of-range,
+// NOT wrapped to -1 (which would both pass an int-range check and get the misleading
+// "clutter tag" message). get<int64_t>() on such a value casts it negative; req_int now
+// reads it as uint64 and compares against INT_MAX.
+TEST(IoConfig, RejectsHugeUnsignedIntegerWithCorrectMessage) {
+  try {
+    (void)radar::parse_scenario(
+        R"({ "dt_s": 0.1, "targets": [ { "id": 18446744073709551615, "x0": 0, "y0": 0, "vx0": 0, "vy0": 0 } ] })",
+        "s");
+    FAIL() << "expected ConfigError";
+  } catch (const radar::ConfigError& e) {
+    const std::string msg = e.what();
+    EXPECT_NE(msg.find("out of range"), std::string::npos) << msg;
+    EXPECT_EQ(msg.find("clutter"), std::string::npos)
+        << "a huge positive id must not be reported as a negative/clutter id: " << msg;
+  }
 }
 
 // #2 — a full-range uint64 seed is accepted (not misread as negative).
@@ -337,14 +376,27 @@ TEST(IoConfig, AcceptsInRangeSensorTrackerValues) {
 }
 
 // #5 — integer CSV columns are locale-independent: even with a thousands-separating
-// global locale imbued on the stream, an id like 1000 stays "1000", not "1,000".
+// locale imbued on the stream, an id like 1000 stays "1000", not "1,000". Uses a custom
+// numpunct facet (built in-process) rather than a named locale like "en_US.UTF-8", so the
+// test does NOT depend on any optional locale being installed on the host/CI runner and
+// cannot silently turn into a GTEST_SKIP (PR #14 re-review minor).
+namespace {
+struct GroupThousands : std::numpunct<char> {
+  char do_thousands_sep() const override { return ','; }
+  std::string do_grouping() const override { return "\3"; }
+};
+}  // namespace
+
 TEST(IoCsv, IntegerColumnsAreLocaleIndependent) {
   std::ostringstream os;
-  try {
-    os.imbue(std::locale("en_US.UTF-8"));  // groups thousands as 1,000 for iostreams
-  } catch (const std::runtime_error&) {
-    GTEST_SKIP() << "en_US.UTF-8 locale not available on this host";
-  }
+  os.imbue(std::locale(std::locale::classic(), new GroupThousands));  // iostreams -> 1,000
+  // Sanity: the facet really would group an iostream integer, so the assertion below is
+  // meaningful (if to_chars secretly honored the locale, this is what it would produce).
+  std::ostringstream probe;
+  probe.imbue(std::locale(std::locale::classic(), new GroupThousands));
+  probe << 1000;
+  ASSERT_EQ(probe.str(), "1,000") << "test facet should group thousands for iostreams";
+
   radar::write_meas_row(os, 1.0, 1000, Eigen::Vector2d{1000.0, 2000.0}, 1000);
   // to_chars ignores the locale entirely: ids and values print without separators.
   EXPECT_EQ(os.str(), "1.000,1000,1000.000000,2000.000000,1000\n");
