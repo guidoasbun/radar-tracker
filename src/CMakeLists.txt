@@ -6,7 +6,9 @@ add_library(radar STATIC
   linalg.cpp
   motion.cpp
   sensor.cpp
-  kalman.cpp)
+  kalman.cpp
+  io/config.cpp
+  io/csv.cpp)
 
 # Public headers: the checked-in include/ tree plus the generated version header
 # under the build dir. Use PROJECT_SOURCE_DIR/PROJECT_BINARY_DIR so the library
@@ -20,6 +22,7 @@ target_link_libraries(radar
   PUBLIC
     Eigen3::Eigen
   PRIVATE
+    nlohmann_json::nlohmann_json
     radar_warnings
     radar_hardening)
 

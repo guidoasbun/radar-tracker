@@ -1,0 +1,11 @@
+{
+  "dt_s": 0.1,
+  "duration_s": 60,
+  "seed": 42,
+  "area_half_width_m": 20000,
+  "sensor": { "sigma_m": 50.0, "p_detect": 0.9, "clutter_per_scan": 2.0 },
+  "tracker": { "sigma_a": 5.0, "gate_chi2": 9.21, "confirm_m": 3, "confirm_n": 5, "delete_after_misses": 5 },
+  "targets": [
+    { "id": 1, "x0": -15000, "y0": -12000, "vx0": 250, "vy0": 180, "maneuvers": [] }
+  ]
+}
