@@ -8,14 +8,47 @@ See [`Documentation/Radar Tracker — Project Specification.md`](Documentation/R
 for the full specification, and [`Documentation/planning/`](Documentation/planning/)
 for the implementation plan (phase by phase).
 
-> Status: **M1 in progress — the Kalman filter is built and verified.** The
-> `types`, `motion` (CV truth), `sensor` (Gaussian noise), and `kalman` (CV linear
-> filter) modules are complete, and **Phase K** — the exhaustive statistical
-> filter-verification battery (NEES/NIS/convergence/covariance credibility) — has
-> passed and merged (PR #12). There is **no runnable application yet**: the `io`
-> (scenario + CSV), `metrics` (RMSE), and `apps/radar_sim` layers that wire a
-> scenario end-to-end are the next M1 steps. For now the build produces `libradar`
-> and the test suite (run with `ctest`, below).
+> Status: **M1 in progress.** The constant-velocity Kalman filter — the keystone the
+> whole project depends on — is built and statistically verified, and the scenario/CSV
+> I/O boundary is in place. There is **no end-to-end application yet**: the `metrics`
+> (RMSE) and `apps/radar_sim` layers that wire a scenario from file to output are the
+> remaining M1 steps. Today the build produces the `libradar` static library and a
+> **89-test** suite (GoogleTest + CTest); see [What's implemented](#whats-implemented).
+
+## What's implemented
+
+Everything below lives in the single static library `libradar` (one header per module
+under `include/radar/`). The algorithm modules have no file or socket dependencies, so
+they build and test in isolation.
+
+| Module | What it does | Status |
+| --- | --- | --- |
+| `types` | Shared plain structs: `Measurement`, `Scan`, `TrackState`, `TrackStatus`, state-vector indices; origin-isolation enforced by the type system | ✅ complete (PR #3) |
+| `motion` | Constant-velocity truth propagation (`cv_transition_matrix`, `propagate_cv`); coordinated-turn model deferred to M2 | ✅ complete (PR #4) |
+| `sensor` | Noise-only sensor slice: Gaussian measurement noise, hidden origin tags, order shuffle, seeded RNG; P_D / clutter deferred to M2 | ✅ complete (PR #10) |
+| `kalman` | CV linear Kalman filter: predict, Joseph-form update, innovation + covariance S, Mahalanobis gate distance, one-point track init; Cholesky SPD guards | ✅ complete (PR #11) |
+| **Phase K** | Exhaustive statistical filter-verification battery — NEES, NIS (×2), covariance credibility, and convergence over a fixed-seed Monte-Carlo, model-matched truth so NEES is a genuine χ²(4) consistency test | ✅ complete (PR #12) |
+| `io` | Scenario JSON → validated `ScenarioConfig` (fails loudly at the boundary via a dedicated `ConfigError`), plus locale-independent CSV **writers** for `truth.csv` / `meas.csv`; CSV readers + `tracks.csv` deferred to when `metrics`/tracker need them | ✅ complete — in review (PR #14) |
+| CI / toolchain | Reproducible CMake-preset build, four-job GitHub Actions gate, gitleaks secret scanning | ✅ complete (PR #2, #7) |
+
+Still to come in M1: `metrics` (RMSE), `apps/radar_sim` (the first runnable executable),
+and the README plot. M2 adds multi-target tracking, clutter, association, and the track
+lifecycle; M3 adds the two-service UDP split; M4 the optional live display. See
+[`Documentation/planning/00-overview.md`](Documentation/planning/00-overview.md) for the
+full phase map and [`Documentation/decisions/`](Documentation/decisions/) for the ADRs.
+
+### What you can run today
+
+There is no `radar_sim` binary yet, so the runnable artifact is the test suite:
+
+```bash
+cmake --preset release
+cmake --build --preset release
+ctest --preset release --output-on-failure    # 89 tests
+```
+
+Scenario loading is wired and testable now — `scenarios/single.json` (one straight-line
+CV target) parses and validates through `radar::load_scenario`, exercised by `test_io`.
 
 ## Requirements
 
