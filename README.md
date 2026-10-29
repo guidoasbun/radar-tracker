@@ -28,7 +28,7 @@ they build and test in isolation.
 | `sensor` | Noise-only sensor slice: Gaussian measurement noise, hidden origin tags, order shuffle, seeded RNG; P_D / clutter deferred to M2 | ✅ complete (PR #10) |
 | `kalman` | CV linear Kalman filter: predict, Joseph-form update, innovation + covariance S, Mahalanobis gate distance, one-point track init; Cholesky SPD guards | ✅ complete (PR #11) |
 | **Phase K** | Exhaustive statistical filter-verification battery — NEES, NIS (×2), covariance credibility, and convergence over a fixed-seed Monte-Carlo, model-matched truth so NEES is a genuine χ²(4) consistency test | ✅ complete (PR #12) |
-| `io` | Scenario JSON → validated `ScenarioConfig` (fails loudly at the boundary via a dedicated `ConfigError`), plus locale-independent CSV **writers** for `truth.csv` / `meas.csv`; CSV readers + `tracks.csv` deferred to when `metrics`/tracker need them | ✅ complete — in review (PR #14) |
+| `io` | Scenario JSON → validated `ScenarioConfig` (fails loudly at the boundary via a dedicated `ConfigError`), plus locale-independent CSV **writers** for `truth.csv` / `meas.csv`; CSV readers + `tracks.csv` deferred to when `metrics`/tracker need them | ✅ complete (PR #14) |
 | CI / toolchain | Reproducible CMake-preset build, four-job GitHub Actions gate, gitleaks secret scanning | ✅ complete (PR #2, #7) |
 
 Still to come in M1: `metrics` (RMSE), `apps/radar_sim` (the first runnable executable),
